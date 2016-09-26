@@ -15,6 +15,8 @@ SET(CFLAGS "-fno-builtin -Wno-int-to-pointer-cast -Wno-writable-strings -nostdin
 # Dynamic by default
 option(BUILD_SHARED_LIBS "" ON)
 set(LDFLAGS "-m32")
+set(CFLAGS "${CFLAGS} -m32")
+set(CXXFLAGS "${CXXFLAGS} -m32")
 if(BUILD_STATIC_LIBS AND UNIX AND NOT APPLE)
     set(LDFLAGS "${LDFLAGS} -static -Wl,--allow-multiple-definition")
     SET(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
@@ -23,9 +25,9 @@ endif()
 
 if(UNIX AND NOT APPLE)
     set(LINUX TRUE)
-    SET(CMAKE_ASM_COMPILER clang-3.8)
-    SET(CMAKE_C_COMPILER clang-3.8)
-    SET(CMAKE_CXX_COMPILER clang++-3.8)
+    SET(CMAKE_ASM_COMPILER clang)
+    SET(CMAKE_C_COMPILER clang)
+    SET(CMAKE_CXX_COMPILER clang++)
 endif()
 if(APPLE)
     set(APPLE TRUE)
@@ -36,6 +38,25 @@ endif()
 if(WIN32)
     set(WIN TRUE)
 endif()
+
+if($ENV{WITEVAL})
+    message("using WIT evaluation compiler settings")
+
+    SET(CFLAGS "${CFLAGS} -emit-llvm -c")
+    SET(CXXFLAGS "${CXXFLAGS} -emit-llvm -c")
+
+    SET(CMAKE_ASM_COMPILER clang)
+    SET(CMAKE_C_COMPILER clang)
+    SET(CMAKE_CXX_COMPILER clang++)
+
+    # see: http://stackoverflow.com/questions/1867745/cmake-use-a-custom-linker
+    # https://cmake.org/pipermail/cmake/2014-August/058268.html
+    SET(CMAKE_LINKER ld-wit.py)
+    SET(CMAKE_C_LINK_EXECUTABLE "<CMAKE_LINKER> <FLAGS> <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS>")
+    SET(CMAKE_CXX_LINK_EXECUTABLE "<CMAKE_LINKER> <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS>")
+endif()
+
+message(${CMAKE_C_LINK_EXECUTABLE})
 
 set(main_dir processed-challenges) # directory which contains all cb subdirs
 
