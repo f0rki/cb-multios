@@ -42,8 +42,8 @@ endif()
 if($ENV{WITEVAL})
     message("using WIT evaluation compiler settings")
 
-    SET(CFLAGS "${CFLAGS} -emit-llvm -c")
-    SET(CXXFLAGS "${CXXFLAGS} -emit-llvm -c")
+    SET(CFLAGS "${CFLAGS} -g -emit-llvm -c")
+    SET(CXXFLAGS "${CXXFLAGS} -g -emit-llvm -c")
 
     SET(CMAKE_ASM_COMPILER clang)
     SET(CMAKE_C_COMPILER clang)
