@@ -46,21 +46,23 @@ if(WIN32)
     add_definitions(-DWIN)
 endif()
 
+set(WITEVAL False)
 if($ENV{WITEVAL})
+    set(WITEVAL True)
     message("using WIT evaluation compiler settings")
 
-    SET(CFLAGS "${CFLAGS} -emit-llvm -c")
-    SET(CXXFLAGS "${CXXFLAGS} -emit-llvm -c")
-
-    SET(CMAKE_ASM_COMPILER clang)
-    SET(CMAKE_C_COMPILER clang)
-    SET(CMAKE_CXX_COMPILER clang++)
+    set(CMAKE_ASM_COMPILER clang)
+    set(CMAKE_C_COMPILER clang)
+    set(CMAKE_CXX_COMPILER clang++)
+    
+    set(WIT_LINKER ld-wit.py)
 
     # see: http://stackoverflow.com/questions/1867745/cmake-use-a-custom-linker
     # https://cmake.org/pipermail/cmake/2014-August/058268.html
-    SET(CMAKE_LINKER ld-wit.py)
-    SET(CMAKE_C_LINK_EXECUTABLE "<CMAKE_LINKER> <FLAGS> <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS>")
-    SET(CMAKE_CXX_LINK_EXECUTABLE "<CMAKE_LINKER> <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS>")
+    set(WIT_C_LINK_EXECUTABLE "ld-wit.py <FLAGS> <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS>")
+    set(WIT_CXX_LINK_EXECUTABLE "ld-wit.py <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --cxx --objects <OBJECTS>")
+    set(CMAKE_C_LINK_EXECUTABLE "${WIT_C_LINK_EXECUTABLE}")
+    set(CMAKE_CXX_LINK_EXECUTABLE "${WIT_CXX_LINK_EXECUTABLE}")
 endif()
 
 # Build all libraries
@@ -68,7 +70,11 @@ add_subdirectory(include)
 include_directories(include)
 
 function(build path target)
-    message("Building ${target}")
+    if(${WITEVAL})
+        message("Building ${target} with WIT enabled")
+    else()
+        message("Building ${target}")
+    endif()
 
     # Gather all sources
     aux_source_directory(${path}/src cb_src)
@@ -84,9 +90,15 @@ function(build path target)
 
     # Add patched defines
     target_compile_definitions(${target}_patched PUBLIC "${patch_defs}")
-
+    
     target_link_libraries(${target} LINK_PUBLIC libcgc)
     target_link_libraries(${target}_patched LINK_PUBLIC libcgc)
+
+    if(${WITEVAL})
+        # compile object files to bitcode
+        target_compile_options("${target}" PUBLIC -emit-llvm -c)
+        target_compile_options("${target}_patched" PUBLIC -emit-llvm -c)
+    endif()
 endfunction()
 
 function(buildCB)
