@@ -44,7 +44,7 @@ esac
 # Prefer ninja over make, if it is available
 if which ninja 2>&1 >/dev/null; then
   CMAKE_OPTS="-G Ninja $CMAKE_OPTS"
-  BUILD_FLAGS=
+  BUILD_FLAGS="-- -j1"
 else
   BUILD_FLAGS="-- -j$(getconf _NPROCESSORS_ONLN)"
 fi
