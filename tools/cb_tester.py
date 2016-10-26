@@ -148,7 +148,7 @@ class Tester:
 
         # Run the tests
         self.run_test(bin_names, xml_dir, score, should_core=is_pov)
-        self.run_test(['{}_patched'.format(b) for b in bin_names], xml_dir, score)
+        # self.run_test(['{}_patched'.format(b) for b in bin_names], xml_dir, score)
 
         # Display resulting totals
         debug(' => Passed {}/{}\n'.format(score.passed - p, score.total - t))

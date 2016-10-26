@@ -141,7 +141,7 @@ class ChallengeHandler(StreamRequestHandler):
 
         # If any of the processes crashed, print out crash info
         for proc in procs:
-            if proc.returncode not in [None, 0, signal.SIGTERM]:
+            if proc.returncode not in [None, 0, signal.SIGTERM, signal.SIGABRT]:
                 # Print the return code
                 pid, sig = proc.pid, abs(proc.returncode)
                 stdout_flush('Process generated signal (pid: {}, signal: {}) - {}\n'.format(pid, sig, testpath))
