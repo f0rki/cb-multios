@@ -49,15 +49,16 @@ if($ENV{WITEVAL})
     set(CMAKE_ASM_COMPILER clang)
     set(CMAKE_C_COMPILER clang)
     set(CMAKE_CXX_COMPILER clang++)
-    
+
     set(WIT_LINKER ld-wit.py)
 
     # see: http://stackoverflow.com/questions/1867745/cmake-use-a-custom-linker
     # https://cmake.org/pipermail/cmake/2014-August/058268.html
-    set(WIT_C_LINK_EXECUTABLE "ld-wit.py <FLAGS> <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS>")
-    set(WIT_CXX_LINK_EXECUTABLE "ld-wit.py <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --cxx --objects <OBJECTS>")
-    set(CMAKE_C_LINK_EXECUTABLE "${WIT_C_LINK_EXECUTABLE}")
-    set(CMAKE_CXX_LINK_EXECUTABLE "${WIT_CXX_LINK_EXECUTABLE}")
+    set(WIT_C_LINK_EXECUTABLE "ld-wit.py <FLAGS> <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS> --objects-end")
+    set(WIT_CXX_LINK_EXECUTABLE "ld-wit.py <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --cxx --objects <OBJECTS> --objects-end")
+    set(WIT_LINK_EXECUTABLE "ld-wit.py <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS> --objects-end --link-cmd ")
+    #set(CMAKE_C_LINK_EXECUTABLE "${WIT_C_LINK_EXECUTABLE}")
+    #set(CMAKE_CXX_LINK_EXECUTABLE "${WIT_CXX_LINK_EXECUTABLE}")
 endif()
 
 # Build all libraries
@@ -78,21 +79,29 @@ function(build path target)
     set(cb_all_src ${cb_lib} ${cb_src} ${cb_inc})
 
     add_executable(${target} ${cb_all_src})
-    add_executable(${target}_patched ${cb_all_src})
-
     target_include_directories(${target} PUBLIC ${path}/lib ${path}/src ${path}/include)
-    target_include_directories(${target}_patched PUBLIC ${path}/lib ${path}/src ${path}/include)
-
-    # Add patched defines
-    target_compile_definitions(${target}_patched PUBLIC "${patch_defs}")
-
     target_link_libraries(${target} LINK_PUBLIC cgc)
-    target_link_libraries(${target}_patched LINK_PUBLIC cgc)
+
+    if (${WITEVAL})
+    else()
+        add_executable(${target}_patched ${cb_all_src})
+        target_include_directories(${target}_patched PUBLIC ${path}/lib ${path}/src ${path}/include)
+        # Add patched defines
+        target_compile_definitions(${target}_patched PUBLIC "${patch_defs}")
+        target_link_libraries(${target}_patched LINK_PUBLIC cgc)
+    endif()
 
     if(${WITEVAL})
         # compile object files to bitcode
         target_compile_options("${target}" PUBLIC -emit-llvm -c)
-        target_compile_options("${target}_patched" PUBLIC -emit-llvm -c)
+        #target_compile_options("${target}_patched" PUBLIC -emit-llvm -c)
+
+        set_target_properties(${target}
+            PROPERTIES
+            RULE_LAUNCH_LINK "${WIT_LINK_EXECUTABLE}" )
+        #set_target_properties(${target}_patched
+        #    PROPERTIES
+        #    RULE_LAUNCH_LINK "${WIT_CXX_LINK_EXECUTABLE}" )
     endif()
 endfunction(build)
 
