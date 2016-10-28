@@ -4,6 +4,8 @@ import glob
 import os
 import subprocess
 import sys
+import datetime
+from collections import OrderedDict
 
 import xlsxwriter as xl  # pip install xlsxwriter
 import xlsxwriter.utility as xlutil
@@ -11,6 +13,7 @@ import xlsxwriter.utility as xlutil
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHAL_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'processed-challenges')
 TEST_DIR = os.path.join(TOOLS_DIR, 'cb-testing')
+BUILD_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'build')
 
 
 def debug(s):
@@ -196,6 +199,30 @@ def test_challenges(chal_names):
     return testers
 
 
+def get_testrun_info():
+    """
+    Return information on how the current test results where produced
+
+    Returns:
+        A dictionary containing 'git-commit', 'buildtime', 'c-compiler',
+        'cpp-compiler'
+
+    """
+    info = OrderedDict()
+    now = datetime.datetime.now()
+    info['time'] = now.strftime("%Y-%M-%D %H:%M (UTC %z)")
+    info['git-commit'] = subprocess.check_output(["git", "log", "-1",
+                                                  "--format=%H"]).strip()
+    cmakecache = os.path.join(BUILD_DIR, "CMakeCache.txt")
+    with open(cmakecache) as f:
+        for line in f.readlines():
+            if line.startswith("CMAKE_C_COMPILER:FILEPATH="):
+                info["c-compiler"] = line.split("=")[1].strip()
+            elif line.startswith("CMAKE_CXX_COMPILER:FILEPATH="):
+                info["cpp-compiler"] = line.split("=")[1].strip()
+    return info
+
+
 def generate_xlsx(path, tests):
     """ Generates an excel spreadsheet containing the results of all tests
 
@@ -307,6 +334,12 @@ def generate_xlsx(path, tests):
         if col_name not in skip_cols:
             col = col_to_idx[col_name]
             ws.write_formula(row, col, '=AVERAGE({})'.format(xlutil.xl_range(1, col, len(tests), col)))
+
+    row += 2
+    info = get_testrun_info()
+    for k, v in info.iteritems():
+        ws.write_row(row, 0, (k, v))
+        row += 1
 
     # Done, save the spreadsheet
     wb.close()
