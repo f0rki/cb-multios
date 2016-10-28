@@ -4,18 +4,46 @@ import glob
 import os
 import subprocess
 import sys
+import logging
 
 import xlsxwriter as xl  # pip install xlsxwriter
 import xlsxwriter.utility as xlutil
 
+try:
+    import colorlog
+except ImportError:
+    colorlog = None
+
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHAL_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'processed-challenges')
 TEST_DIR = os.path.join(TOOLS_DIR, 'cb-testing')
+log = None
 
 
-def debug(s):
-    sys.stdout.write(str(s))
-    sys.stdout.flush()
+def setup_logging(console=True, logfile=None, loglevel=logging.INFO,
+                  name="cb_tester"):
+    log = logging.getLogger(name)
+    log.setLevel(loglevel)
+    if console and colorlog is not None:
+        handler = colorlog.StreamHandler()
+        fmt = '%(log_color)s%(levelname)-8s%(reset)s : %(name)s :: %(message)s'
+        fmter = colorlog.ColoredFormatter(fmt)
+        handler.setFormatter(fmter)
+        log.addHandler(handler)
+    elif console:
+        fmt = '%(levelname)-8s : %(name)s :: %(message)s'
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(fmt))
+        log.addHandler(handler)
+
+    if logfile is not None:
+        log.debug("logging to file '{}'".format(logfile))
+        handler = logging.FileHandler(logfile)
+        fmt = '%(asctime)s ; %(levelname)s ; %(name)s ; %(message)s'
+        handler.setFormatter(logging.Formatter(fmt, "%Y-%m-%d %H:%M"))
+        log.addHandler(handler)
+
+    return log
 
 
 class Score:
@@ -78,12 +106,11 @@ class Tester:
         """
         # If the test failed to run, consider it failed
         if 'TOTAL TESTS' not in output:
-            debug('\nWARNING: there was an error running a test')
-            print output
+            log.warning('there was an error running a test """%s"""', output)
             return 0, 0
 
         if 'timed out' in output:
-            debug('\nWARNING: test(s) timed out')
+            log.warning('test(s) timed out')
 
         # Parse out results
         total = int(output.split('TOTAL TESTS: ')[1].split('\n')[0])
@@ -129,11 +156,11 @@ class Tester:
         tests = glob.glob(os.path.join(xml_dir, '*.xml'))
         tests += glob.glob(os.path.join(xml_dir, '*.pov'))
         if len(tests) == 0:
-            debug('None found\n')
+            log.info('None found')
             return
 
         # *2 because each test is run against the patched and unpatched binary
-        debug('Running {} test(s)'.format(len(tests) * 2))
+        log.info('Running {} test(s)'.format(len(tests) * 2))
 
         # Collect the names of binaries to be tested
         cb_dirs = glob.glob(os.path.join(self.chal_dir, 'cb_*'))
@@ -151,24 +178,26 @@ class Tester:
         self.run_test(['{}_patched'.format(b) for b in bin_names], xml_dir, score)
 
         # Display resulting totals
-        debug(' => Passed {}/{}\n'.format(score.passed - p, score.total - t))
+        log.info('{} {} => Passed {}/{}'.format(self.name,
+                                                "POV" if is_pov else "POLL",
+                                                score.passed - p,
+                                                score.total - t))
 
     def run(self):
         """Runs all tests for this challenge binary"""
-        debug('\nTesting {}...\n'.format(self.name))
+        log.info('Testing {}...'.format(self.name))
 
         # Test POVs
         if Tester.povs_enabled:
-            debug('POV:\n\t')
+            log.info('running POVs')
             self.run_against_dir(self.pov_dir, self.povs, is_pov=True)
 
         # Test POLLs
         if Tester.polls_enabled:
-            debug('POLL:\n')
             for subdir in listdir(self.poll_dir):
-                debug('\t{}:\t'.format(subdir))
+                log.info('running POLL {}'.format(subdir))
                 self.run_against_dir(os.path.join(self.poll_dir, subdir), self.polls)
-        debug('Done testing {} => Passed {}/{} tests\n'.format(self.name, self.passed, self.total))
+        log.info('Done testing {} => Passed {}/{} tests'.format(self.name, self.passed, self.total))
 
 
 def test_challenges(chal_names):
@@ -178,12 +207,12 @@ def test_challenges(chal_names):
     for c in chal_names:
         cdir = os.path.join(CHAL_DIR, c)
         if not os.path.isdir(cdir):
-            debug('ERR: Challenge "{}" does not exist, skipping\n'.format(c))
+            log.warning('Challenge "{}" does not exist, skipping'.format(c))
             continue
 
         # Skip duplicates
         if c in chals:
-            debug('Ignoring duplicate "{}"\n'.format(c))
+            log.debug('Ignoring duplicate "{}"'.format(c))
             continue
 
         chals.append(c)
@@ -203,7 +232,7 @@ def generate_xlsx(path, tests):
         path (str): Path to save the spreadsheet
         tests (list of Tester): All completed tests
     """
-    debug('Generating excel spreadsheet...')
+    log.info('Generating excel spreadsheet...')
     # Fix filename
     if not path.endswith('.xlsx'):
         path += '.xlsx'
@@ -310,7 +339,7 @@ def generate_xlsx(path, tests):
 
     # Done, save the spreadsheet
     wb.close()
-    debug('Done, saved to {}\n'.format(path))
+    log.info('Done, saved to {}'.format(path))
 
 
 def listdir(path):
@@ -341,6 +370,14 @@ def main():
                         default=None, type=str,
                         help='If provided, an excel spreadsheet will be generated and saved here')
 
+    parser.add_argument('-l', '--logfile',
+                        default=None, type=str,
+                        help='Log output of this script to this file')
+
+    parser.add_argument('-q', '--quiet',
+                        default=False, action='store_true',
+                        help='Surpress console log output')
+
     args = parser.parse_args(sys.argv[1:])
 
     # Disable other tests depending on args
@@ -349,11 +386,14 @@ def main():
     if args.polls:
         Tester.povs_enabled = False
 
+    global log
+    log = setup_logging(console=(not args.quiet), logfile=args.logfile)
+
     if args.all:
-        debug('Running tests against all challenges\n')
+        log.info('Running tests against all challenges')
         tests = test_challenges(listdir(CHAL_DIR))
     else:
-        debug('Running tests against {} challenge(s)\n'.format(len(args.chals)))
+        log.info('Running tests against {} challenge(s)'.format(len(args.chals)))
         tests = test_challenges(args.chals)
 
     if args.output:
