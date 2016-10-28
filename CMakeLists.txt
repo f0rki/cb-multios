@@ -57,6 +57,7 @@ if($ENV{WITEVAL})
     set(WIT_C_LINK_EXECUTABLE "ld-wit.py <FLAGS> <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS> --objects-end")
     set(WIT_CXX_LINK_EXECUTABLE "ld-wit.py <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --cxx --objects <OBJECTS> --objects-end")
     set(WIT_LINK_EXECUTABLE "ld-wit.py <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS> --objects-end --link-cmd ")
+    set(NOWIT_LINK_EXECUTABLE "ld-wit.py --skipwit <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> --XXX -o <TARGET> <LINK_LIBRARIES> --objects <OBJECTS> --objects-end --link-cmd ")
     #set(CMAKE_C_LINK_EXECUTABLE "${WIT_C_LINK_EXECUTABLE}")
     #set(CMAKE_CXX_LINK_EXECUTABLE "${WIT_CXX_LINK_EXECUTABLE}")
 endif()
@@ -82,26 +83,29 @@ function(build path target)
     target_include_directories(${target} PUBLIC ${path}/lib ${path}/src ${path}/include)
     target_link_libraries(${target} LINK_PUBLIC cgc)
 
-    if (${WITEVAL})
-    else()
-        add_executable(${target}_patched ${cb_all_src})
-        target_include_directories(${target}_patched PUBLIC ${path}/lib ${path}/src ${path}/include)
-        # Add patched defines
-        target_compile_definitions(${target}_patched PUBLIC "${patch_defs}")
-        target_link_libraries(${target}_patched LINK_PUBLIC cgc)
-    endif()
+    add_executable(${target}_patched ${cb_all_src})
+    target_include_directories(${target}_patched PUBLIC ${path}/lib ${path}/src ${path}/include)
+    # Add patched defines
+    target_compile_definitions(${target}_patched PUBLIC "${patch_defs}")
+    target_link_libraries(${target}_patched LINK_PUBLIC cgc)
 
     if(${WITEVAL})
-        # compile object files to bitcode
-        target_compile_options("${target}" PUBLIC -emit-llvm -c)
-        #target_compile_options("${target}_patched" PUBLIC -emit-llvm -c)
+        add_executable(${target}_wit ${cb_all_src})
+        target_include_directories(${target}_wit PUBLIC ${path}/lib ${path}/src ${path}/include)
+        target_link_libraries(${target}_wit LINK_PUBLIC cgc)
+        target_compile_options("${target}_wit" PUBLIC -emit-llvm -c)
 
-        set_target_properties(${target}
+        add_executable(${target}_skipwit ${cb_all_src})
+        target_include_directories(${target}_skipwit PUBLIC ${path}/lib ${path}/src ${path}/include)
+        target_link_libraries(${target}_skipwit LINK_PUBLIC cgc)
+        target_compile_options("${target}_skipwit" PUBLIC -emit-llvm -c)
+
+        set_target_properties(${target}_wit
             PROPERTIES
             RULE_LAUNCH_LINK "${WIT_LINK_EXECUTABLE}" )
-        #set_target_properties(${target}_patched
-        #    PROPERTIES
-        #    RULE_LAUNCH_LINK "${WIT_CXX_LINK_EXECUTABLE}" )
+        set_target_properties(${target}_skipwit
+            PROPERTIES
+            RULE_LAUNCH_LINK "${NOWIT_LINK_EXECUTABLE}" )
     endif()
 endfunction(build)
 

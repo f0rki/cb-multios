@@ -78,19 +78,39 @@ class Tester:
         self.pov_dir = os.path.join(self.chal_dir, 'pov')
         self.poll_dir = os.path.join(self.chal_dir, 'poller')
 
-        # Keep track of success
-        self.povs = Score()
-        self.polls = Score()
+        # Keep track of success for each build variant
+        self.variants = {"": True, "patched": False,
+                         "wit": False, "skipwit": True}
+        self.povs = {k: Score() for k in self.variants}
+        self.polls = {k: Score() for k in self.variants}
+
+    @property
+    def povs_total(self):
+        return sum(score.total for score in self.povs.itervalues())
+
+    @property
+    def polls_total(self):
+        return sum(score.total for score in self.polls.itervalues())
+
+    @property
+    def povs_passed(self):
+        return sum(score.passed for score in self.povs.itervalues())
+
+    @property
+    def polls_passed(self):
+        return sum(score.passed for score in self.polls.itervalues())
 
     @property
     def passed(self):
         """Number of passed tests"""
-        return self.povs.passed + self.polls.passed
+        return (sum(score.passed for score in self.povs.itervalues()) +
+                sum(score.passed for score in self.polls.itervalues()))
 
     @property
     def total(self):
         """Total number of tests run"""
-        return self.povs.total + self.polls.total
+        return (sum(score.total for score in self.povs.itervalues()) +
+                sum(score.total for score in self.polls.itervalues()))
 
     @property
     def failed(self):
@@ -119,7 +139,7 @@ class Tester:
         passed = int(output.split('TOTAL PASSED: ')[1].split('\n')[0])
         return total, passed
 
-    def run_test(self, bin_names, xml_dir, score, should_core=False):
+    def run_test(self, bin_names, xml_dir, should_core=False):
         """ Runs a test using cb-test and saves the result
 
         Args:
@@ -141,11 +161,9 @@ class Tester:
         out, err = p.communicate()
 
         total, passed = self.parse_results(out)
-        score.total += total
-        score.passed += passed
-        # print out
+        return total, passed
 
-    def run_against_dir(self, xml_dir, score, is_pov=False):
+    def run_against_dir(self, xml_dir, scores, is_pov=False):
         """ Runs all tests in a given directory
         against the patched and unpatched versions of a binary
 
@@ -173,17 +191,31 @@ class Tester:
             bin_names = [self.name]
 
         # Keep track of old pass/totals
-        p, t = score.passed, score.total
+        all_total, all_passed = 0, 0
 
         # Run the tests
-        self.run_test(bin_names, xml_dir, score, should_core=is_pov)
-        # self.run_test(['{}_patched'.format(b) for b in bin_names], xml_dir, score)
+        for pf in self.variants:
+            log.info("Running tests for variant '%s'", pf)
+            score = scores[pf]
+            if is_pov:
+                should_core = self.variants[pf]
+            else:
+                should_core = False
+            t, p = self.run_test(['{}{}{}'.format(b, "_" if pf else "", pf)
+                                  for b in bin_names],
+                                 xml_dir, should_core=should_core)
+            log.info('%s for variant %s => Passed %d/%d',
+                     "POV" if is_pov else "POLL", pf, p, t)
+            score.total += t
+            score.passed += p
+            all_total += t
+            all_passed += p
 
         # Display resulting totals
         log.info('{} {} => Passed {}/{}'.format(self.name,
                                                 "POV" if is_pov else "POLL",
-                                                score.passed - p,
-                                                score.total - t))
+                                                all_passed,
+                                                all_total))
 
     def run(self):
         """Runs all tests for this challenge binary"""
@@ -284,7 +316,13 @@ def generate_xlsx(path, tests):
             'POVs Total', 'POVs Passed', 'POVs Failed', '% POVs Passed', '',
             'POLLs Total', 'POLLs Passed', 'POLLs Failed', '% POLLs Passed', '',
             'Total Tests', 'Total Passed', 'Total Failed', 'Total % Passed',
-            'Notes']
+            'Notes', '']
+    for pf in tests[0].variants:
+        for x in ('POVs Total', 'POVs Passed'):
+            cols.append("{} {}".format(pf.replace("_", ""), x))
+        for x in ('POLLs Total', 'POLLs Passed'):
+            cols.append("{} {}".format(pf.replace("_", ""), x))
+        cols.append('')
     row = 0
     ws.write_row(row, 0, cols)
 
@@ -318,14 +356,16 @@ def generate_xlsx(path, tests):
 
         # NOTE: Leaving all of these to be calculated in excel in case you want to manually edit it later
         # POVs
-        fmt = select_fmt(test.povs.total, test.povs.passed)
-        ws.write_row(row, col_to_idx['POVs Total'], [test.povs.total, test.povs.passed], fmt)
+        fmt = select_fmt(test.povs_total, test.povs_passed)
+        ws.write_row(row, col_to_idx['POVs Total'],
+                     [test.povs_total, test.povs_passed], fmt)
         write_formula(row, 'POVs Failed', subtract, 'POVs Total', 'POVs Passed', fmt)
         write_formula(row, '% POVs Passed', percent, 'POVs Passed', 'POVs Total', fmt)
 
         # POLLs
-        fmt = select_fmt(test.polls.total, test.polls.passed)
-        ws.write_row(row, col_to_idx['POLLs Total'], [test.polls.total, test.polls.passed], fmt)
+        fmt = select_fmt(test.polls_total, test.polls_passed)
+        ws.write_row(row, col_to_idx['POLLs Total'],
+                     [test.polls_total, test.polls_passed], fmt)
         write_formula(row, 'POLLs Failed', subtract, 'POLLs Total', 'POLLs Passed', fmt)
         write_formula(row, '% POLLs Passed', percent, 'POLLs Passed', 'POLLs Total', fmt)
 
@@ -335,6 +375,23 @@ def generate_xlsx(path, tests):
         write_formula(row, 'Total Passed', add, 'POVs Passed', 'POLLs Passed', fmt)
         write_formula(row, 'Total Failed', subtract, 'Total Tests', 'Total Passed', fmt)
         write_formula(row, 'Total % Passed', percent, 'Total Passed', 'Total Tests', fmt)
+
+        lastcol = col_to_idx['Notes']
+        curcol = lastcol + 2
+
+        for postf in test.variants:
+            povs, polls = test.povs[postf], test.polls[postf]
+            # POVs
+            fmt = select_fmt(povs.total, povs.passed)
+            rowdata = [povs.total, povs.passed]
+            ws.write_row(row, curcol, rowdata, fmt)
+            curcol += len(rowdata)
+
+            # POLLs
+            fmt = select_fmt(polls.total, polls.passed)
+            rowdata = [polls.total, polls.passed]
+            ws.write_row(row, curcol, rowdata, fmt)
+            curcol += len(rowdata) + 1
 
     # These columns are ignored in totals
     skip_cols = ['', 'CB_NAME', '% POVs Passed', '% POLLs Passed', 'Total % Passed', 'Notes']
@@ -363,6 +420,7 @@ def generate_xlsx(path, tests):
             col = col_to_idx[col_name]
             ws.write_formula(row, col, '=AVERAGE({})'.format(xlutil.xl_range(1, col, len(tests), col)))
 
+    # write some info on how the binaries were built, etc.
     row += 2
     info = get_testrun_info()
     for k, v in info.iteritems():

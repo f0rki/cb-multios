@@ -563,11 +563,14 @@ class Runner(object):
         elif sig == 0:
             logging.warning('ok - process did not core as expected', extra={'raw': True})
             ret = 0
+        elif sig == signal.SIGABRT:
+            logging.warning('ok - process aborted', extra={'raw': True})
+            ret = 0
 
         return ret
 
     def _check_result_type1(self, sig, replay_stdout, server_stdout):
-        if sig == 0:
+        if sig == 0 or sig == signal.SIGABRT:
             if self.should_core:
                 logging.error('not ok - POV type 1 should have cored, and did not.', extra={'raw': True})
                 return -1
