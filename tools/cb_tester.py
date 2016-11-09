@@ -79,8 +79,10 @@ class Tester:
         self.poll_dir = os.path.join(self.chal_dir, 'poller')
 
         # Keep track of success for each build variant
-        self.variants = {"": True, "patched": False,
-                         "wit": False, "skipwit": True}
+        self.variants = OrderedDict({"": True,
+                                     "patched": False,
+                                     "wit": False,
+                                     "skipwit": True})
         self.povs = {k: Score() for k in self.variants}
         self.polls = {k: Score() for k in self.variants}
 
