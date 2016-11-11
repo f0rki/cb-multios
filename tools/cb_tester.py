@@ -26,14 +26,14 @@ def setup_logging(console=True, logfile=None, loglevel=logging.INFO,
     log.setLevel(loglevel)
     if console and colorlog is not None:
         handler = colorlog.StreamHandler()
-        fmt = '%(log_color)s%(levelname)-8s%(reset)s : %(name)s :: %(message)s'
-        fmter = colorlog.ColoredFormatter(fmt)
+        fmt = '%(log_color)s%(levelname)-8s%(reset)s : %(asctime)s :: %(message)s'
+        fmter = colorlog.ColoredFormatter(fmt, "%Y-%m-%d %H:%M")
         handler.setFormatter(fmter)
         log.addHandler(handler)
     elif console:
-        fmt = '%(levelname)-8s : %(name)s :: %(message)s'
+        fmt = '%(levelname)-8s : %(asctime)s :: %(message)s'
         handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter(fmt))
+        handler.setFormatter(logging.Formatter(fmt, "%Y-%m-%d %H:%M"))
         log.addHandler(handler)
 
     if logfile is not None:
