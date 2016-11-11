@@ -65,6 +65,15 @@ function(build path target)
 
     target_link_libraries(${target} LINK_PUBLIC cgc)
     target_link_libraries(${target}_patched LINK_PUBLIC cgc)
+
+    # build also as .so for poll generation
+    add_library(${target}lib SHARED ${cb_all_src})
+    target_include_directories(${target}lib PUBLIC ${path}/lib ${path}/src ${path}/include)
+    target_compile_definitions(${target}lib PUBLIC "${patch_defs}")
+    target_link_libraries(${target}lib LINK_PUBLIC cgc)
+    set_target_properties(${target}lib PROPERTIES OUTPUT_NAME ${target})
+
+
 endfunction(build)
 
 function(buildPOV path cb pov)
