@@ -107,6 +107,13 @@ function(build path target)
             PROPERTIES
             RULE_LAUNCH_LINK "${NOWIT_LINK_EXECUTABLE}" )
     endif()
+
+    if(${SAFESTACKEVAL})
+        add_executable(${target}_safestack ${cb_all_src})
+        target_include_directories(${target}_wit PUBLIC ${path}/lib ${path}/src ${path}/include)
+        target_link_libraries(${target}_safestack LINK_PUBLIC cgc)
+        target_compile_options("${target}_safestack" PUBLIC -fsanitize=safe-stack)
+    endif()
 endfunction(build)
 
 function(buildPOV path cb pov)
