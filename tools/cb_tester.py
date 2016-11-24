@@ -434,6 +434,43 @@ def generate_xlsx(path, tests):
     log.info('Done, saved to {}'.format(path))
 
 
+def generate_json(path, tests):
+    log.info('Generating json results file...')
+    # Fix filename
+    if not path.endswith('.json'):
+        path += '.json'
+
+    results = []
+
+    for test in tests:
+        o = {}
+        o['name'] = test.name
+        o['povs_total'] = test.povs_total
+        o['povs_passed'] = test.povs_passed
+        o['povs_failed'] = test.povs_total - test.povs_passed
+        o['polls_total'] = test.polls_total
+        o['polls_passed'] = test.polls_passed
+        o['polls_failed'] = test.polls_total - test.polls_passed
+
+        o['variants'] = {}
+
+        for var in test.variants:
+            x = {}
+            povs, polls = test.povs[var], test.polls[var]
+            x['povs_total'] = povs.total
+            x['povs_passed'] = povs.passed
+            x['povs_failed'] = povs.total - povs.passed
+
+            x['polls_total'] = polls.total
+            x['polls_passed'] = polls.passed
+            x['polls_failed'] = polls.total - polls.passed
+
+            o['variants'][var] = x
+
+    with open(path, "w") as f:
+        json.dump(results, f)
+
+
 def listdir(path):
     # type: (str) -> list
     if not os.path.isdir(path):
@@ -461,6 +498,10 @@ def main():
     parser.add_argument('-o', '--output',
                         default=None, type=str,
                         help='If provided, an excel spreadsheet will be generated and saved here')
+
+    parser.add_argument('-j', '--json-output',
+                        default=None, type=str,
+                        help='If provided, save results as json file')
 
     parser.add_argument('-l', '--logfile',
                         default=None, type=str,
@@ -490,6 +531,9 @@ def main():
 
     if args.output:
         generate_xlsx(os.path.abspath(args.output), tests)
+
+    if args.json_output:
+        generate_json(os.path.abspath(args.output), tests)
 
 
 if __name__ == '__main__':
