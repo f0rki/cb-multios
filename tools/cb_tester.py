@@ -6,6 +6,7 @@ import subprocess
 import sys
 import logging
 import datetime
+import json
 from collections import OrderedDict
 
 import xlsxwriter as xl  # pip install xlsxwriter
@@ -25,15 +26,16 @@ BUILD_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'build')
 def setup_logging(console=True, logfile=None, loglevel=logging.INFO,
                   name="cb_tester"):
     log = logging.getLogger(name)
+    log.handlers = []
     log.setLevel(loglevel)
     if console and colorlog is not None:
         handler = colorlog.StreamHandler()
-        fmt = '%(log_color)s%(levelname)-8s%(reset)s : %(name)s :: %(message)s'
+        fmt = '%(log_color)s%(levelname)-8s%(reset)s : %(message)s'
         fmter = colorlog.ColoredFormatter(fmt)
         handler.setFormatter(fmter)
         log.addHandler(handler)
     elif console:
-        fmt = '%(levelname)-8s : %(name)s :: %(message)s'
+        fmt = '%(levelname)-8s : %(message)s'
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter(fmt))
         log.addHandler(handler)
@@ -69,7 +71,7 @@ class Tester:
     povs_enabled = True
     polls_enabled = True
 
-    def __init__(self, chal_name):
+    def __init__(self, chal_name, variants=None):
         self.name = chal_name
 
         # Directories used in testing
@@ -80,9 +82,10 @@ class Tester:
 
         # Keep track of success for each build variant
         self.variants = OrderedDict({"": True,
-                                     "patched": False,
-                                     "wit": False,
-                                     "skipwit": True})
+                                     "patched": False})
+        if variants:
+            self.variants.update(variants)
+
         self.povs = {k: Score() for k in self.variants}
         self.polls = {k: Score() for k in self.variants}
 
@@ -159,7 +162,11 @@ class Tester:
         if should_core:
             cb_cmd += ['--should_core']
 
-        p = subprocess.Popen(cb_cmd, cwd=TEST_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        log.debug("running command '%s' in dir '%s'",
+                  " ".join(cb_cmd), TEST_DIR)
+
+        p = subprocess.Popen(cb_cmd, cwd=TEST_DIR,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = p.communicate()
 
         total, passed = self.parse_results(out)
@@ -188,7 +195,8 @@ class Tester:
         cb_dirs = glob.glob(os.path.join(self.chal_dir, 'cb_*'))
         if len(cb_dirs) > 0:
             # There are multiple binaries in this challenge
-            bin_names = ['{}_{}'.format(self.name, i + 1) for i in range(len(cb_dirs))]
+            bin_names = ['{}_{}'.format(self.name, i + 1)
+                         for i in range(len(cb_dirs))]
         else:
             bin_names = [self.name]
 
@@ -206,7 +214,7 @@ class Tester:
             t, p = self.run_test(['{}{}{}'.format(b, "_" if pf else "", pf)
                                   for b in bin_names],
                                  xml_dir, should_core=should_core)
-            log.info('%s for variant %s => Passed %d/%d',
+            log.info('%s for variant "%s" => Passed %d/%d',
                      "POV" if is_pov else "POLL", pf, p, t)
             score.total += t
             score.passed += p
@@ -232,11 +240,13 @@ class Tester:
         if Tester.polls_enabled:
             for subdir in listdir(self.poll_dir):
                 log.info('running POLL {}'.format(subdir))
-                self.run_against_dir(os.path.join(self.poll_dir, subdir), self.polls)
-        log.info('Done testing {} => Passed {}/{} tests'.format(self.name, self.passed, self.total))
+                self.run_against_dir(os.path.join(
+                    self.poll_dir, subdir), self.polls)
+        log.info('Done testing {} => Passed {}/{} tests'.format(self.name,
+                                                                self.passed, self.total))
 
 
-def test_challenges(chal_names):
+def test_challenges(chal_names, variants=None):
     # type: (list) -> list
     # Filter out any challenges that don't exist
     chals = []
@@ -254,7 +264,7 @@ def test_challenges(chal_names):
         chals.append(c)
 
     # Create and run all testers
-    testers = map(Tester, chals)
+    testers = map(lambda y: Tester(y, variants=variants), chals)
     for test in testers:
         test.run()
 
@@ -303,10 +313,14 @@ def generate_xlsx(path, tests):
     # Some cell formats used in the sheet
     fmt_name = wb.add_format({'font_color': '#00ff00', 'bg_color': 'black',
                               'border': 1, 'border_color': '#005500'})
-    fmt_perfect = wb.add_format({'bg_color': '#b6d7a8', 'border': 1, 'border_color': '#cccccc'})
-    fmt_bad = wb.add_format({'bg_color': '#ea9999', 'border': 1, 'border_color': '#cccccc'})
-    fmt_none = wb.add_format({'bg_color': '#ffe599', 'border': 1, 'border_color': '#cccccc'})
-    fmt_default = wb.add_format({'bg_color': 'white', 'border': 1, 'border_color': '#cccccc'})
+    fmt_perfect = wb.add_format(
+        {'bg_color': '#b6d7a8', 'border': 1, 'border_color': '#cccccc'})
+    fmt_bad = wb.add_format(
+        {'bg_color': '#ea9999', 'border': 1, 'border_color': '#cccccc'})
+    fmt_none = wb.add_format(
+        {'bg_color': '#ffe599', 'border': 1, 'border_color': '#cccccc'})
+    fmt_default = wb.add_format(
+        {'bg_color': 'white', 'border': 1, 'border_color': '#cccccc'})
 
     # Some common format strings
     subtract = '={}-{}'
@@ -356,27 +370,36 @@ def generate_xlsx(path, tests):
         # Write the challenge name
         ws.write(row, 0, test.name, fmt_name)
 
-        # NOTE: Leaving all of these to be calculated in excel in case you want to manually edit it later
+        # NOTE: Leaving all of these to be calculated in excel in case you want
+        # to manually edit it later
         # POVs
         fmt = select_fmt(test.povs_total, test.povs_passed)
         ws.write_row(row, col_to_idx['POVs Total'],
                      [test.povs_total, test.povs_passed], fmt)
-        write_formula(row, 'POVs Failed', subtract, 'POVs Total', 'POVs Passed', fmt)
-        write_formula(row, '% POVs Passed', percent, 'POVs Passed', 'POVs Total', fmt)
+        write_formula(row, 'POVs Failed', subtract,
+                      'POVs Total', 'POVs Passed', fmt)
+        write_formula(row, '% POVs Passed', percent,
+                      'POVs Passed', 'POVs Total', fmt)
 
         # POLLs
         fmt = select_fmt(test.polls_total, test.polls_passed)
         ws.write_row(row, col_to_idx['POLLs Total'],
                      [test.polls_total, test.polls_passed], fmt)
-        write_formula(row, 'POLLs Failed', subtract, 'POLLs Total', 'POLLs Passed', fmt)
-        write_formula(row, '% POLLs Passed', percent, 'POLLs Passed', 'POLLs Total', fmt)
+        write_formula(row, 'POLLs Failed', subtract,
+                      'POLLs Total', 'POLLs Passed', fmt)
+        write_formula(row, '% POLLs Passed', percent,
+                      'POLLs Passed', 'POLLs Total', fmt)
 
         # Totals
         fmt = select_fmt(test.total, test.passed)
-        write_formula(row, 'Total Tests', add, 'POVs Total', 'POLLs Total', fmt)
-        write_formula(row, 'Total Passed', add, 'POVs Passed', 'POLLs Passed', fmt)
-        write_formula(row, 'Total Failed', subtract, 'Total Tests', 'Total Passed', fmt)
-        write_formula(row, 'Total % Passed', percent, 'Total Passed', 'Total Tests', fmt)
+        write_formula(row, 'Total Tests', add,
+                      'POVs Total', 'POLLs Total', fmt)
+        write_formula(row, 'Total Passed', add,
+                      'POVs Passed', 'POLLs Passed', fmt)
+        write_formula(row, 'Total Failed', subtract,
+                      'Total Tests', 'Total Passed', fmt)
+        write_formula(row, 'Total % Passed', percent,
+                      'Total Passed', 'Total Tests', fmt)
 
         lastcol = col_to_idx['Notes']
         curcol = lastcol + 2
@@ -396,7 +419,8 @@ def generate_xlsx(path, tests):
             curcol += len(rowdata) + 1
 
     # These columns are ignored in totals
-    skip_cols = ['', 'CB_NAME', '% POVs Passed', '% POLLs Passed', 'Total % Passed', 'Notes']
+    skip_cols = ['', 'CB_NAME', '% POVs Passed',
+                 '% POLLs Passed', 'Total % Passed', 'Notes']
 
     # Totals at bottom
     row += 1
@@ -404,12 +428,15 @@ def generate_xlsx(path, tests):
     for col_name in cols:
         if col_name not in skip_cols:
             col = col_to_idx[col_name]
-            ws.write_formula(row, col, '=SUM({})'.format(xlutil.xl_range(1, col, len(tests), col)))
+            ws.write_formula(row, col, '=SUM({})'.format(
+                xlutil.xl_range(1, col, len(tests), col)))
 
     # Calculate total %'s
     write_formula(row, '% POVs Passed', percent, 'POVs Passed', 'POVs Total')
-    write_formula(row, '% POLLs Passed', percent, 'POLLs Passed', 'POLLs Total')
-    write_formula(row, 'Total % Passed', percent, 'Total Passed', 'Total Tests')
+    write_formula(row, '% POLLs Passed', percent,
+                  'POLLs Passed', 'POLLs Total')
+    write_formula(row, 'Total % Passed', percent,
+                  'Total Passed', 'Total Tests')
 
     # These columns are ignored in averages
     skip_cols = ['', 'CB_NAME', 'Notes']
@@ -420,7 +447,8 @@ def generate_xlsx(path, tests):
     for col_name in cols:
         if col_name not in skip_cols:
             col = col_to_idx[col_name]
-            ws.write_formula(row, col, '=AVERAGE({})'.format(xlutil.xl_range(1, col, len(tests), col)))
+            ws.write_formula(row, col, '=AVERAGE({})'.format(
+                xlutil.xl_range(1, col, len(tests), col)))
 
     # write some info on how the binaries were built, etc.
     row += 2
@@ -497,7 +525,8 @@ def main():
 
     parser.add_argument('-o', '--output',
                         default=None, type=str,
-                        help='If provided, an excel spreadsheet will be generated and saved here')
+                        help=('If provided, an excel spreadsheet will ' +
+                              'be generated and saved here'))
 
     parser.add_argument('-j', '--json-output',
                         default=None, type=str,
@@ -511,6 +540,15 @@ def main():
                         default=False, action='store_true',
                         help='Surpress console log output')
 
+    parser.add_argument('-V', '--verbose',
+                        default=False, action='store_true',
+                        help='Logging with debug output')
+
+    parser.add_argument('-v', '--variants',
+                        nargs="+",
+                        help="the variants that should be tested, format" +
+                             "'variant_name:vulnerable' e.g. 'patched:False'")
+
     args = parser.parse_args(sys.argv[1:])
 
     # Disable other tests depending on args
@@ -520,14 +558,35 @@ def main():
         Tester.povs_enabled = False
 
     global log
-    log = setup_logging(console=(not args.quiet), logfile=args.logfile)
+    log = setup_logging(console=(not args.quiet),
+                        logfile=args.logfile,
+                        loglevel=(logging.DEBUG
+                                  if args.verbose
+                                  else logging.INFO))
+
+    variants = None
+    if args.variants:
+        variants = OrderedDict()
+        for v in args.variants:
+            if ":" not in v:
+                raise ValueError("Invalid format for variant '{}'".format(v))
+            name, vuln = v.split(":")
+            if vuln.startswith("F") or vuln.startswith("f") or vuln == "0":
+                vuln = False
+            elif vuln.startswith("T") or vuln.startswith("t") or vuln == "1":
+                vuln = True
+            else:
+                raise ValueError("Invalid boolean for variant specifier '{}'"
+                                 .format(v))
+            variants[name] = vuln
 
     if args.all:
         log.info('Running tests against all challenges')
-        tests = test_challenges(listdir(CHAL_DIR))
+        tests = test_challenges(listdir(CHAL_DIR), variants=variants)
     else:
-        log.info('Running tests against {} challenge(s)'.format(len(args.chals)))
-        tests = test_challenges(args.chals)
+        log.info('Running tests against {} challenge(s)'
+                 .format(len(args.chals)))
+        tests = test_challenges(args.chals, variants=variants)
 
     if args.output:
         generate_xlsx(os.path.abspath(args.output), tests)

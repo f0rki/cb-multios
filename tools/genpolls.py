@@ -47,7 +47,7 @@ def setup_logging(console=True, logfile=None,
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHAL_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'processed-challenges')
 GEN_POLLS = os.path.join(TOOLS_DIR, "generate-polls", "generate-polls")
-GEN_POLLS_CMD = ['python', '-B', GEN_POLLS, '--count', '500', '--repeat', '0',
+GEN_POLLS_CMD = ['python2', '-B', GEN_POLLS, '--count', '500', '--repeat', '0',
                  '--store_seed']
 TIMEOUT = (60 * 10)
 
@@ -76,7 +76,7 @@ def is_blacklisted_poller(path):
             return True
     except sp.CalledProcessError as e:
         if e.returncode != 1:
-            log.exception("grep failed")
+            log.exception("grep failed '{}'".format(cmd))
     return False
 
 
@@ -92,7 +92,8 @@ def init_from_args(args, is_worker=False):
                         logfile=args['logfile'],
                         loglevel=(logging.DEBUG if args['verbose']
                                   else logging.INFO),
-                        name="genpolls-worker" if is_worker else "genpolls-main")
+                        name=("genpolls-worker" if is_worker else
+                              "genpolls-main"))
 
     global TIMEOUT
     TIMEOUT = args['timeout']
@@ -101,15 +102,15 @@ def init_from_args(args, is_worker=False):
 def gen_poll(path):
     pollid = os.path.join(*split_all(path)[-3:])
 
-    if is_blacklisted_poller(path):
-        log.info("skipping blacklisted poller %s", pollid)
-        return (path, False, "blacklisted")
-
     machinepy = os.path.join(path, 'machine.py')
     log.debug("'%s' exists? %s", machinepy, os.path.exists(machinepy))
     if not os.path.exists(machinepy):
         log.debug("not generating poll for %s (no machine.py) ", pollid)
         return (path, True, "no machine.py")
+
+    if is_blacklisted_poller(path):
+        log.info("skipping blacklisted poller %s", pollid)
+        return (path, False, "blacklisted")
 
     log.info("generating poll %s", pollid)
     for pollnum in (1000, 500, 100, 10, 5, 3, 1):
@@ -132,7 +133,8 @@ def gen_poll(path):
 
             if proc.returncode == 0:
                 if out or err:
-                    log.debug("child exited:\n-- stdout: --\n%s\n-- stderr: --\n%s", out, err)
+                    log.debug("child exited:\n-- stdout: --\n%s\n-- stderr: --\n%s",
+                              out, err)
                 else:
                     log.debug("child %d exited without output", proc.pid)
                 log.info("got %d polls for %s", pollnum, pollid)
@@ -153,7 +155,8 @@ def gen_poll(path):
             out, err = proc.communicate()
             out = out.decode('utf-8')
             err = err.decode('utf-8')
-            log.warning("child timeouted:\n-- stdout: --\n%s\n-- stderr: --\n%s", out, err)
+            log.warning("child timeouted:\n-- stdout: --\n%s\n-- stderr: --\n%s",
+                        out, err)
             lasttimeouted = True
             continue
         except KeyboardInterrupt:
@@ -162,14 +165,16 @@ def gen_poll(path):
             raise
 
     if lasttimeouted:
-        log.warning("timeout generating poller %s:\n-- stdout: --\n%s\n-- stderr: --\n%s", pollid, out, err)
+        log.warning("timeout generating poller %s:\n-- stdout: --\n%s\n-- stderr: --\n%s",
+                    pollid, out, err)
         return (path, False, "timeout")
 
     if proc.returncode == 0:
         log.info("success generating poller %s", pollid)
         return (path, True, "")
     else:
-        log.warning("failure generating poller %s:\n-- stdout: --\n%s\n-- stderr: --\n%s", pollid, out, err)
+        log.warning("failure generating poller %s:\n-- stdout: --\n%s\n-- stderr: --\n%s",
+                    pollid, out, err)
         return (path, False, "returncode {}".format(proc.returncode))
 
 
