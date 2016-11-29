@@ -7,6 +7,7 @@ import sys
 import logging
 import datetime
 import json
+import csv
 from collections import OrderedDict
 
 import xlsxwriter as xl  # pip install xlsxwriter
@@ -462,41 +463,84 @@ def generate_xlsx(path, tests):
     log.info('Done, saved to {}'.format(path))
 
 
-def generate_json(path, tests):
-    log.info('Generating json results file...')
+def generate_json(path, tests, pretty_print=False):
     # Fix filename
     if not path.endswith('.json'):
         path += '.json'
 
+    log.info('Generating json results file "%s"', path)
+
     results = []
 
     for test in tests:
-        o = {}
+        log.debug("Got testcase %s", test.name)
+        o = {'povs': {}, 'polls': {}}
         o['name'] = test.name
-        o['povs_total'] = test.povs_total
-        o['povs_passed'] = test.povs_passed
-        o['povs_failed'] = test.povs_total - test.povs_passed
-        o['polls_total'] = test.polls_total
-        o['polls_passed'] = test.polls_passed
-        o['polls_failed'] = test.polls_total - test.polls_passed
+        o['povs']['total'] = test.povs_total
+        o['povs']['passed'] = test.povs_passed
+        o['povs']['failed'] = test.povs_total - test.povs_passed
+        o['polls']['total'] = test.polls_total
+        o['polls']['passed'] = test.polls_passed
+        o['polls']['failed'] = test.polls_total - test.polls_passed
 
         o['variants'] = {}
 
         for var in test.variants:
-            x = {}
+            x = {'povs': {}, 'polls': {}}
             povs, polls = test.povs[var], test.polls[var]
-            x['povs_total'] = povs.total
-            x['povs_passed'] = povs.passed
-            x['povs_failed'] = povs.total - povs.passed
+            x['povs']['total'] = povs.total
+            x['povs']['passed'] = povs.passed
+            x['povs']['failed'] = povs.total - povs.passed
 
-            x['polls_total'] = polls.total
-            x['polls_passed'] = polls.passed
-            x['polls_failed'] = polls.total - polls.passed
+            x['polls']['total'] = polls.total
+            x['polls']['passed'] = polls.passed
+            x['polls']['failed'] = polls.total - polls.passed
 
             o['variants'][var] = x
 
+        results.append(o)
+
     with open(path, "w") as f:
-        json.dump(results, f)
+        if pretty_print:
+            json.dump(results, f,
+                      separators=(',', ': '),
+                      indent=2, sort_keys=True)
+        else:
+            json.dump(results, f)
+        f.write("\n")
+
+
+def generate_csv(path, tests):
+    if not tests:
+        log.error("No testcases!")
+
+    # Fix filename
+    if not path.endswith('.csv'):
+        path += '.csv'
+
+    log.info('Generating csv results file "%s"', path)
+
+    with open(path, "wb") as csvfile:
+        cw = csv.writer(csvfile)
+
+        titlerow = ["cb_name"]
+        for var in tests[0].variants:
+            if not var:
+                var = "vuln"
+            titlerow += [s.format(var) for s in ("{}_polls_total",
+                                                 "{}_polls_passed",
+                                                 "{}_povs_total",
+                                                 "{}_povs_passed")]
+
+        for test in tests:
+            log.debug("Got testcase %s", test.name)
+            row = [test.name]
+            for var in test.variants:
+                povs, polls = test.povs[var], test.polls[var]
+                row += [polls.total, polls.total - polls.failed,
+                        povs.total, povs.total - povs.failed]
+
+            cw.writerow(row)
 
 
 def listdir(path):
@@ -525,12 +569,21 @@ def main():
 
     parser.add_argument('-o', '--output',
                         default=None, type=str,
-                        help=('If provided, an excel spreadsheet will ' +
-                              'be generated and saved here'))
+                        help=('If provided, the test results will be saved'
+                              'here in the specified output format'
+                              '(default = .xlsx)'))
 
-    parser.add_argument('-j', '--json-output',
-                        default=None, type=str,
-                        help='If provided, save results as json file')
+    parser.add_argument('--xlsx',
+                        action='store_true',
+                        help='Save results as xlsx spreadsheet')
+
+    parser.add_argument('--json',
+                        action='store_true',
+                        help='Save results as json file')
+
+    parser.add_argument('--csv',
+                        action='store_true',
+                        help='Save results as csv file')
 
     parser.add_argument('-l', '--logfile',
                         default=None, type=str,
@@ -589,10 +642,15 @@ def main():
         tests = test_challenges(args.chals, variants=variants)
 
     if args.output:
-        generate_xlsx(os.path.abspath(args.output), tests)
+        if not (args.csv or args.json):
+            args.xlsx = True
 
-    if args.json_output:
-        generate_json(os.path.abspath(args.output), tests)
+        if args.xlsx:
+            generate_xlsx(os.path.abspath(args.output), tests)
+        if args.json:
+            generate_json(os.path.abspath(args.output), tests)
+        if args.csv:
+            generate_json(os.path.abspath(args.output), tests)
 
 
 if __name__ == '__main__':
