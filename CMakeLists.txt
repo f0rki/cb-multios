@@ -62,6 +62,9 @@ if($ENV{WITEVAL})
     #set(CMAKE_CXX_LINK_EXECUTABLE "${WIT_CXX_LINK_EXECUTABLE}")
 endif()
 
+# both safe-stack and CFI link to pthread
+find_package(Threads)
+
 if($ENV{SAFESTACKEVAL})
     set(SAFESTACKEVAL True)
 endif()
@@ -69,16 +72,23 @@ endif()
 if($ENV{CFIEVAL})
     set(CFIEVAL True)
 endif()
+
+if($ENV{CPIEVAL})
+    set(CPIEVAL True)
+    set(CPIPATH $ENV{CPIPATH})
+
+    set(CPI_CLANG "${CPIPATH}/build/bin/clang")
+    set(CPI_CLANGPP "${CPIPATH}/build/bin/clang++")
+    # TODO: figure out cli params for CPI instrumentation
+    #set(CPI_CFLAGS )
+    #set(CPI_CXXFLAGS )
+endif()
+
 # Build all libraries
 include_directories(include)
 add_subdirectory(include)
 
 function(build path target)
-    if(${WITEVAL})
-        message("Building ${target} with WIT enabled")
-    else()
-        message("Building ${target}")
-    endif()
 
     # Gather all sources
     aux_source_directory(${path}/src cb_src)
@@ -97,44 +107,84 @@ function(build path target)
     target_link_libraries(${target}_patched LINK_PUBLIC cgc)
 
     if(${WITEVAL})
+        message("Building ${target} with WIT enabled")
+
         add_executable(${target}_wit ${cb_all_src})
         target_include_directories(${target}_wit PUBLIC ${path}/lib ${path}/src ${path}/include)
         target_link_libraries(${target}_wit LINK_PUBLIC cgc)
         target_compile_options("${target}_wit" PUBLIC -emit-llvm -c)
+        set_target_properties(${target}_wit
+                              PROPERTIES
+                              RULE_LAUNCH_LINK "${WIT_LINK_EXECUTABLE}" )
 
         add_executable(${target}_skipwit ${cb_all_src})
         target_include_directories(${target}_skipwit PUBLIC ${path}/lib ${path}/src ${path}/include)
         target_link_libraries(${target}_skipwit LINK_PUBLIC cgc)
         target_compile_options("${target}_skipwit" PUBLIC -emit-llvm -c)
-
-        set_target_properties(${target}_wit
-            PROPERTIES
-            RULE_LAUNCH_LINK "${WIT_LINK_EXECUTABLE}" )
         set_target_properties(${target}_skipwit
-            PROPERTIES
-            RULE_LAUNCH_LINK "${NOWIT_LINK_EXECUTABLE}" )
+                              PROPERTIES
+                              RULE_LAUNCH_LINK "${NOWIT_LINK_EXECUTABLE}" )
     endif()
 
     if(${SAFESTACKEVAL})
+        message("Building ${target} with safe-stack enabled")
         set(variant ${target}_safestack)
+
         add_executable(${variant} ${cb_all_src})
-        target_include_directories(${target}_wit PUBLIC ${path}/lib ${path}/src ${path}/include)
+        target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
         target_link_libraries(${variant} LINK_PUBLIC cgc)
+        execute_process(COMMAND llvm-config --libdir
+                        OUTPUT_VARIABLE llvmlibdir
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        execute_process(COMMAND llvm-config --version
+                        OUTPUT_VARIABLE llvmversion
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        set(safestack_rt ${llvmlibdir}/clang/${llvmversion}/lib/linux/libclang_rt.safestack-i386.a)
+        target_link_libraries(${variant} LINK_PUBLIC
+                              ${safestack_rt}
+                              ${CMAKE_THREAD_LIBS_INIT}
+                              ${CMAKE_DL_LIBS})
         target_compile_options("${variant}" PUBLIC -fsanitize=safe-stack)
     endif()
 
     if(${CFIEVAL})
+        message("Building ${target} with CFI enabled")
+
         set(variant ${target}_cfi)
+        add_executable(${variant} ${cb_all_src})
+        target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
+        target_link_libraries(${variant} LINK_PUBLIC cgc)
+        target_compile_options("${variant}" PUBLIC -flto -fvisibility=hidden -fsanitize=cfi -fno-sanitize-trap=all)
+        execute_process(COMMAND llvm-config --libdir
+                        OUTPUT_VARIABLE llvmlibdir
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        execute_process(COMMAND llvm-config --version
+                        OUTPUT_VARIABLE llvmversion
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        set(cfi_rt
+            ${llvmlibdir}/clang/${llvmversion}/lib/linux/libclang_rt.ubsan_standalone-i386.a)
+        target_link_libraries(${variant} LINK_PUBLIC
+                              ${cfi_rt}
+                              ${CMAKE_THREAD_LIBS_INIT}
+                              ${CMAKE_DL_LIBS}
+                              rt)
+        set_target_properties(${variant}
+            PROPERTIES
+            LINK_FLAGS " -flto -fuse-ld=/usr/bin/ld.gold ")
+    endif()
+
+    if(${CPIEVAL})
+        message("Building ${target} with CPI enabled")
+
+        set(variant ${target}_cpi)
         add_executable(${variant} ${cb_all_src})
         target_include_directories(${target}_wit PUBLIC ${path}/lib ${path}/src ${path}/include)
         target_link_libraries(${variant} LINK_PUBLIC cgc)
-        target_compile_options("${variant}" PUBLIC -flto -fuse-ld=/usr/bin/ld.gold -fvisibility=hidden -fsanitize=cfi -fno-sanitize-trap=all)
+        target_compile_options("${variant}" PUBLIC -flto -fuse-ld=/usr/bin/ld.gold)
     endif()
-        target_include_directories(${target}_wit PUBLIC ${path}/lib ${path}/src ${path}/include)
-        target_link_libraries(${target}_safestack LINK_PUBLIC cgc)
-        target_compile_options("${target}_safestack" PUBLIC -fsanitize=safe-stack)
-    endif()
+
 endfunction(build)
+
 
 function(buildPOV path cb pov)
     # Unique target name, i.e. "Palindrome2_pov_1",
@@ -155,6 +205,7 @@ function(buildPOV path cb pov)
 
     target_link_libraries(${target} LINK_PUBLIC cgc pov)
 endfunction(buildPOV)
+
 
 function(buildCB)
     # Generate all the patched #defines for this challenge
@@ -189,6 +240,7 @@ function(buildCB)
         endforeach()
     endif()
 endfunction(buildCB)
+
 
 # More options needed for cbs
 add_compile_options(
