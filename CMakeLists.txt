@@ -75,13 +75,22 @@ endif()
 
 if($ENV{CPIEVAL})
     set(CPIEVAL True)
+    message("CPI enabled. Disabling incompatible build types!")
+    set(CFIEVAL false)
+    set(SAFESTACKEVAL false)
+    set(WITEVAL false)
+
     set(CPIPATH $ENV{CPIPATH})
+    message("CPI build located at ${CPIPATH}")
 
     set(CPI_CLANG "${CPIPATH}/build/bin/clang")
     set(CPI_CLANGPP "${CPIPATH}/build/bin/clang++")
     # TODO: figure out cli params for CPI instrumentation
     #set(CPI_CFLAGS )
     #set(CPI_CXXFLAGS )
+    set(CMAKE_ASM_COMPILER ${CPI_CLANG})
+    set(CMAKE_C_COMPILER ${CPI_CLANG})
+    set(CMAKE_CXX_COMPILER ${CPI_CLANGPP})
 endif()
 
 # Build all libraries
