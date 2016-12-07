@@ -74,6 +74,7 @@ class Tester:
 
     def __init__(self, chal_name, variants=None):
         self.name = chal_name
+        self.finished = False
 
         # Directories used in testing
         self.chal_dir = os.path.join(CHAL_DIR, self.name)
@@ -245,9 +246,10 @@ class Tester:
                     self.poll_dir, subdir), self.polls)
         log.info('Done testing {} => Passed {}/{} tests'.format(self.name,
                                                                 self.passed, self.total))
+        self.finished = True
 
 
-def test_challenges(chal_names, variants=None):
+def test_challenges(chal_names, variants=None, previous_testers=[]):
     # type: (list) -> list
     # Filter out any challenges that don't exist
     chals = []
@@ -265,11 +267,32 @@ def test_challenges(chal_names, variants=None):
         chals.append(c)
 
     # Create and run all testers
-    testers = map(lambda y: Tester(y, variants=variants), chals)
-    for test in testers:
-        test.run()
+    previous_testers = {tester.name: tester for tester in previous_testers}
+    testers = {tester.name: tester
+               for tester in map(lambda y: Tester(y, variants=variants), chals)
+               if tester.name not in previous_testers}
+    testers.update(previous_testers)
 
-    return testers
+    # this can be a pretty long running loop. So we make it interruptible,
+    # without loosing data about done tests...
+    try:
+        for i, test in enumerate(testers.values()):
+            if test.finished:
+                log.info("Skipping previously finished test {}/{} '{}'"
+                         .format(i, len(testers), test.name))
+            else:
+                log.info("Running test {}/{} '{}'"
+                         .format(i, len(testers), test.name))
+                test.run()
+    except KeyboardInterrupt:
+        log.info("User abort during test {}/{} '{}'"
+                 .format(i, len(testers), test.name))
+    except:
+        log.warning("Received exception during test {}/{} '{}'"
+                    .format(i, len(testers), test.name),
+                    exc_info=sys.exc_info())
+
+    return list(testers.values())
 
 
 def get_testrun_info():
@@ -294,6 +317,22 @@ def get_testrun_info():
             elif line.startswith("CMAKE_CXX_COMPILER:FILEPATH="):
                 info["cpp-compiler"] = line.split("=")[1].strip()
     return info
+
+
+def save_tests(tests, state_file):
+    log.info("saving test state to {}".format(state_file))
+    with open(state_file, "wb") as f:
+        pickle.dump(tests, f)
+
+
+def load_tests(state_file):
+    if not os.path.exists(state_file):
+        log.warning("Previous state_file '{}' does not exist"
+                    .format(state_file))
+        return []
+    log.info("loading test state from {}".format(state_file))
+    with open(state_file, "rb") as f:
+        return pickle.load(f)
 
 
 def generate_xlsx(path, tests):
@@ -518,7 +557,7 @@ def generate_csv(path, tests):
     if not path.endswith('.csv'):
         path += '.csv'
 
-    log.info('Generating csv results file "%s"', path)
+    hog.info('Generating csv results file "{}"'.format(path))
 
     with open(path, "wb") as csvfile:
         cw = csv.writer(csvfile)
@@ -602,6 +641,19 @@ def main():
                         help="the variants that should be tested, format" +
                              "'variant_name:vulnerable' e.g. 'patched:False'")
 
+    parser.add_argument('--save-state',
+                        action='store_true',
+                        help="store the state of unfinished/finished test"
+                             "results")
+
+    parser.add_argument('--load-state',
+                        action='store_true',
+                        help="load the state of cb test results and continue")
+
+    parser.add_argument("--state-file",
+                        default="./.state.pickle", type=str,
+                        help="path to the state file")
+
     args = parser.parse_args(sys.argv[1:])
 
     # Disable other tests depending on args
@@ -635,13 +687,35 @@ def main():
 
     if args.all:
         log.info('Running tests against all challenges')
-        tests = test_challenges(listdir(CHAL_DIR), variants=variants)
+        chals = listdir(CHAL_DIR)
     else:
         log.info('Running tests against {} challenge(s)'
                  .format(len(args.chals)))
-        tests = test_challenges(args.chals, variants=variants)
+        chals = args.chals
+
+    if args.load_state:
+        previous_tests = load_tests(args.state_file)
+        log.info("loaded {} tests from previous state"
+                 .format(len(previous_tests)))
+    else:
+        previous_tests = []
+
+    tests = test_challenges(chals, variants, previous_tests)
+
+    if args.save_state:
+        save_tests(tests, args.state_file)
+
+    # save only finished tests to results output
+    tests = [test for test in tests if test.finished]
+
+    log.info("Finished {} tests".format(len(tests)))
 
     if args.output:
+        if not tests:
+            log.error("No finished testcases. Cannot produce output!")
+            return
+
+        # default format is xlsx
         if not (args.csv or args.json):
             args.xlsx = True
 
