@@ -9,6 +9,10 @@ import datetime
 import json
 import csv
 from collections import OrderedDict
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 
 import xlsxwriter as xl  # pip install xlsxwriter
 import xlsxwriter.utility as xlutil
@@ -570,14 +574,14 @@ def generate_csv(path, tests):
                                                  "{}_polls_passed",
                                                  "{}_povs_total",
                                                  "{}_povs_passed")]
+        cw.writerow(titlerow)
 
         for test in tests:
-            log.debug("Got testcase %s", test.name)
             row = [test.name]
             for var in test.variants:
                 povs, polls = test.povs[var], test.polls[var]
-                row += [polls.total, polls.total - polls.failed,
-                        povs.total, povs.total - povs.failed]
+                row += [polls.total, polls.passed,
+                        povs.total, povs.passed]
 
             cw.writerow(row)
 
@@ -724,6 +728,7 @@ def main():
         if args.json:
             generate_json(os.path.abspath(args.output), tests)
         if args.csv:
+            generate_csv(os.path.abspath(args.output), tests)
             generate_json(os.path.abspath(args.output), tests)
 
 
