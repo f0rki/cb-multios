@@ -92,8 +92,13 @@ class Tester:
         if variants:
             self.variants.update(variants)
 
+        self.reset()
+
+
+    def reset(self):
         self.povs = {k: Score() for k in self.variants}
         self.polls = {k: Score() for k in self.variants}
+        self.finished = False
 
     @property
     def povs_total(self):
@@ -291,10 +296,13 @@ def test_challenges(chal_names, variants=None, previous_testers=[]):
     except KeyboardInterrupt:
         log.info("User abort during test {}/{} '{}'"
                  .format(i, len(testers), test.name))
+        # clear results of last test
+        test.reset()
     except:
         log.warning("Received exception during test {}/{} '{}'"
                     .format(i, len(testers), test.name),
                     exc_info=sys.exc_info())
+        test.reset()
 
     return list(testers.values())
 
