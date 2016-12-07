@@ -35,6 +35,7 @@ sftp-config.json
 ## Build generated
 build/
 processed-challenges
+processed-challenges*
 DerivedData
 
 ## Various settings

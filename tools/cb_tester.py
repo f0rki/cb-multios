@@ -9,6 +9,7 @@ import datetime
 import json
 import csv
 from collections import OrderedDict
+from multiprocessing import cpu_count
 try:
     import cPickle as pickle
 except ImportError:
@@ -31,28 +32,36 @@ BUILD_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'build')
 def setup_logging(console=True, logfile=None, loglevel=logging.INFO,
                   name="cb_tester"):
     log = logging.getLogger(name)
-    log.handlers = []
+    log.handlers = []  # remove previous handlers
     log.setLevel(loglevel)
+    timefmt = "%Y-%m-%d %H:%M"
     if console and colorlog is not None:
         handler = colorlog.StreamHandler()
-        fmt = '%(log_color)s%(levelname)-8s%(reset)s : %(message)s'
-        fmter = colorlog.ColoredFormatter(fmt)
+        fmt = '%(log_color)s%(levelname)-8s%(reset)s : %(asctime)s :  %(message)s'  # NOQA
+        fmter = colorlog.ColoredFormatter(fmt, timefmt)
         handler.setFormatter(fmter)
         log.addHandler(handler)
     elif console:
-        fmt = '%(levelname)-8s : %(message)s'
+        fmt = '%(levelname)-8s : %(asctime)s : %(message)s'
         handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter(fmt))
+        handler.setFormatter(logging.Formatter(fmt, timefmt))
         log.addHandler(handler)
 
     if logfile is not None:
         log.debug("logging to file '{}'".format(logfile))
         handler = logging.FileHandler(logfile)
         fmt = '%(asctime)s ; %(levelname)s ; %(name)s ; %(message)s'
-        handler.setFormatter(logging.Formatter(fmt, "%Y-%m-%d %H:%M"))
+        handler.setFormatter(logging.Formatter(fmt, timefmt + ":%s"))
         log.addHandler(handler)
 
     return log
+
+
+class TesterLogAdapter(logging.LoggerAdapter):
+    """Add the name of the current cb to log messages"""
+
+    def process(self, msg, kwargs):
+        return "[{}] {}".format(self.extra['cbname'], msg), kwargs
 
 
 class Score:
@@ -61,6 +70,7 @@ class Score:
     def __init__(self):
         self.passed = 0
         self.total = 0
+        self.timeouted = 0
 
     @property
     def failed(self):
@@ -94,26 +104,37 @@ class Tester:
 
         self.reset()
 
+        # keep track of test runtimes
+        self.runtime = {v: {'povs': {}, 'polls': {}} for v in self.variants}
+
+        self._setup_log_adapter()
 
     def reset(self):
         self.povs = {k: Score() for k in self.variants}
         self.polls = {k: Score() for k in self.variants}
         self.finished = False
 
+    def _setup_log_adapter(self):
+        self.log = TesterLogAdapter(log, {'cbname': self.name})
+
     @property
     def povs_total(self):
+        """Total number of povs"""
         return sum(score.total for score in self.povs.itervalues())
 
     @property
     def polls_total(self):
+        """Total number of polls"""
         return sum(score.total for score in self.polls.itervalues())
 
     @property
     def povs_passed(self):
+        """Number of passed povs"""
         return sum(score.passed for score in self.povs.itervalues())
 
     @property
     def polls_passed(self):
+        """Number of passed polls"""
         return sum(score.passed for score in self.polls.itervalues())
 
     @property
@@ -133,9 +154,9 @@ class Tester:
         """Number of failed tests"""
         return self.total - self.passed
 
-    @staticmethod
-    def parse_results(output):
-        """ Parses out the number of passed and failed tests from cb-test output
+    def parse_results(self, output):
+        """
+        Parse out the number of passed and failed tests from cb-test output.
 
         Args:
             output (str): Raw output from running cb-test
@@ -144,48 +165,54 @@ class Tester:
         """
         # If the test failed to run, consider it failed
         if 'TOTAL TESTS' not in output:
-            log.warning('there was an error running a test """%s"""', output)
-            return 0, 0
+            self.log.warning('there was an error running a test """{}"""'
+                             .format(output))
+            return 0, 0, 0
 
         if 'timed out' in output:
-            log.warning('test(s) timed out')
+            timedout = output.count("timed out")
+            self.log.warning('{} test(s) timed out'.format(timedout))
+        else:
+            timedout = 0
 
         # Parse out results
         total = int(output.split('TOTAL TESTS: ')[1].split('\n')[0])
         passed = int(output.split('TOTAL PASSED: ')[1].split('\n')[0])
-        return total, passed
+        return total, passed, timedout
 
     def run_test(self, bin_names, xml_dir, should_core=False):
-        """ Runs a test using cb-test and saves the result
+        """
+        Run a test using cb-test and saves the result.
 
         Args:
             bin_names (list of str): Name of the binary being tested
             xml_dir (str): Directory containing all xml tests
             score (Score): Object to store the results in
-            should_core (bool): If the binary is expected to crash with these tests
+            should_core (bool): If the binary is expected to crash
         """
         cb_cmd = ['./cb-test',
                   '--directory', self.bin_dir,
                   '--xml_dir', xml_dir,
-                  '--concurrent', '4',
+                  '--concurrent', str(cpu_count()),
                   '--timeout', '5',
                   '--negotiate_seed', '--cb'] + bin_names
         if should_core:
             cb_cmd += ['--should_core']
 
-        log.debug("running command '%s' in dir '%s'",
-                  " ".join(cb_cmd), TEST_DIR)
+        self.log.debug("running command '{}' in dir '{}'"
+                       .format(" ".join(cb_cmd), TEST_DIR))
 
         p = subprocess.Popen(cb_cmd, cwd=TEST_DIR,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = p.communicate()
 
-        total, passed = self.parse_results(out)
-        return total, passed
+        total, passed, timedout = self.parse_results(out)
+        return total, passed, timedout
 
     def run_against_dir(self, xml_dir, scores, is_pov=False):
-        """ Runs all tests in a given directory
-        against the patched and unpatched versions of a binary
+        """
+        Run all tests in a given directory against the patched and unpatched
+        versions of a binary.
 
         Args:
             xml_dir (str): Directory containing all xml tests
@@ -196,11 +223,11 @@ class Tester:
         tests = glob.glob(os.path.join(xml_dir, '*.xml'))
         tests += glob.glob(os.path.join(xml_dir, '*.pov'))
         if len(tests) == 0:
-            log.info('None found')
+            self.log.info('No tests found in "{}"'.format(xml_dir))
             return
 
         # *2 because each test is run against the patched and unpatched binary
-        log.info('Running {} test(s)'.format(len(tests) * 2))
+        self.log.info('Running {} test(s)'.format(len(tests) * 2))
 
         # Collect the names of binaries to be tested
         cb_dirs = glob.glob(os.path.join(self.chal_dir, 'cb_*'))
@@ -213,48 +240,63 @@ class Tester:
 
         # Keep track of old pass/totals
         all_total, all_passed = 0, 0
+        all_timeouted = 0
 
         # Run the tests
         for pf in self.variants:
-            log.info("Running tests for variant '%s'", pf)
+            self.log.info("Running tests for variant '{}'".format(pf))
             score = scores[pf]
             if is_pov:
                 should_core = self.variants[pf]
             else:
                 should_core = False
-            t, p = self.run_test(['{}{}{}'.format(b, "_" if pf else "", pf)
-                                  for b in bin_names],
-                                 xml_dir, should_core=should_core)
-            log.info('%s for variant "%s" => Passed %d/%d',
-                     "POV" if is_pov else "POLL", pf, p, t)
+
+            start = datetime.datetime.now()
+            t, p, to = self.run_test(['{}{}{}'.format(b, "_" if pf else "", pf)
+                                      for b in bin_names],
+                                     xml_dir, should_core=should_core)
+
+            stop = datetime.datetime.now()
+            dur = stop - start
+            self.runtime[pf]['povs' if is_pov else 'polls'][xml_dir] = dur
+            mins, secs = divmod(dur.total_seconds(), 60)
+
+            self.log.info(('{} for variant "{}" => Passed {}/{} '
+                           '(with {} timeouts, took {} min {} sec)')
+                          .format("POV" if is_pov else "POLL", pf, p, t, to,
+                                  mins, secs))
             score.total += t
             score.passed += p
+            # TODO: remove this ugly hack
+            if "timeouted" not in score.__dict__:
+                score.timeouted = 0
+            score.timeouted += to
             all_total += t
             all_passed += p
+            all_timeouted += to
 
         # Display resulting totals
-        log.info('{} {} => Passed {}/{}'.format(self.name,
-                                                "POV" if is_pov else "POLL",
-                                                all_passed,
-                                                all_total))
+        self.log.info('{} {} => Passed {}/{}'
+                      .format(self.name, "POV" if is_pov else "POLL",
+                              all_passed, all_total))
 
     def run(self):
-        """Runs all tests for this challenge binary"""
-        log.info('Testing {}...'.format(self.name))
+        """Run all tests for this challenge binary"""
+        self.log.info('Testing {}...'.format(self.name))
 
         # Test POVs
         if Tester.povs_enabled:
-            log.info('running POVs')
+            self.log.info('running POVs')
             self.run_against_dir(self.pov_dir, self.povs, is_pov=True)
 
         # Test POLLs
         if Tester.polls_enabled:
             for subdir in listdir(self.poll_dir):
-                log.info('running POLL {}'.format(subdir))
+                self.log.info('running POLL {}'.format(subdir))
                 self.run_against_dir(os.path.join(
                     self.poll_dir, subdir), self.polls)
-        log.info('Done testing {} => Passed {}/{} tests'.format(self.name,
-                                                                self.passed, self.total))
+        self.log.info('Done testing {} => Passed {}/{} tests'
+                      .format(self.name, self.passed, self.total))
         self.finished = True
 
 
@@ -288,19 +330,19 @@ def test_challenges(chal_names, variants=None, previous_testers=[]):
         for i, test in enumerate(testers.values()):
             if test.finished:
                 log.info("Skipping previously finished test {}/{} '{}'"
-                         .format(i, len(testers), test.name))
+                         .format(i + 1, len(testers), test.name))
             else:
                 log.info("Running test {}/{} '{}'"
-                         .format(i, len(testers), test.name))
+                         .format(i + 1, len(testers), test.name))
                 test.run()
     except KeyboardInterrupt:
         log.info("User abort during test {}/{} '{}'"
-                 .format(i, len(testers), test.name))
+                 .format(i + 1, len(testers), test.name))
         # clear results of last test
         test.reset()
     except:
         log.warning("Received exception during test {}/{} '{}'"
-                    .format(i, len(testers), test.name),
+                    .format(i + 1, len(testers), test.name),
                     exc_info=sys.exc_info())
         test.reset()
 
@@ -318,7 +360,7 @@ def get_testrun_info():
     """
     info = OrderedDict()
     now = datetime.datetime.now()
-    info['time'] = now.strftime("%Y-%M-%D %H:%M (UTC %z)")
+    info['finish-time'] = now.strftime("%Y-%M-%D %H:%M (UTC %z)")
     info['git-commit'] = subprocess.check_output(["git", "log", "-1",
                                                   "--format=%H"]).strip()
     cmakecache = os.path.join(BUILD_DIR, "CMakeCache.txt")
@@ -328,12 +370,22 @@ def get_testrun_info():
                 info["c-compiler"] = line.split("=")[1].strip()
             elif line.startswith("CMAKE_CXX_COMPILER:FILEPATH="):
                 info["cpp-compiler"] = line.split("=")[1].strip()
+    for k in ('c-compiler', 'cpp-compiler'):
+        try:
+            o = subprocess.check_output([info[k], '--version'])
+            o = o.split("\n")[0]
+            info[k + '-version'] = o.strip()
+        except subprocess.CalledProcessError:
+            log.warning("compiler '{}' doesn't support '--version'"
+                        .format(info[k]))
     return info
 
 
 def save_tests(tests, state_file):
     log.info("saving test state to {}".format(state_file))
     with open(state_file, "wb") as f:
+        for test in tests:
+            test.log = None
         pickle.dump(tests, f)
 
 
@@ -343,8 +395,12 @@ def load_tests(state_file):
                     .format(state_file))
         return []
     log.info("loading test state from {}".format(state_file))
+    tests = []
     with open(state_file, "rb") as f:
-        return pickle.load(f)
+        tests = pickle.load(f)
+    for test in tests:
+        test._setup_log_adapter()
+    return tests
 
 
 def generate_xlsx(path, tests):
@@ -354,6 +410,9 @@ def generate_xlsx(path, tests):
         path (str): Path to save the spreadsheet
         tests (list of Tester): All completed tests
     """
+    if not tests:
+        log.error("No finished testcases!")
+
     log.info('Generating excel spreadsheet...')
     # Fix filename
     if not path.endswith('.xlsx'):
@@ -382,7 +441,8 @@ def generate_xlsx(path, tests):
     # Write headers
     cols = ['CB_NAME',
             'POVs Total', 'POVs Passed', 'POVs Failed', '% POVs Passed', '',
-            'POLLs Total', 'POLLs Passed', 'POLLs Failed', '% POLLs Passed', '',
+            'POLLs Total', 'POLLs Passed', 'POLLs Failed', '% POLLs Passed',
+            '',
             'Total Tests', 'Total Passed', 'Total Failed', 'Total % Passed',
             'Notes', '']
     for pf in tests[0].variants:
@@ -398,11 +458,13 @@ def generate_xlsx(path, tests):
     col_to_idx = {val: i for i, val in enumerate(cols)}
 
     # Helper for writing formulas that use two cells
-    def write_formula(row, col_name, formula, formula_col1, formula_col2, fmt=fmt_default):
+    def write_formula(row, col_name, formula, formula_col1, formula_col2,
+                      fmt=fmt_default):
         # type: (int, str, str, str, str, xl.format.Format) -> None
+        fcol1 = xlutil.xl_rowcol_to_cell(row, col_to_idx[formula_col1])
+        fcol2 = xlutil.xl_rowcol_to_cell(row, col_to_idx[formula_col2])
         ws.write_formula(row, col_to_idx[col_name],
-                         formula.format(xlutil.xl_rowcol_to_cell(row, col_to_idx[formula_col1]),
-                                        xlutil.xl_rowcol_to_cell(row, col_to_idx[formula_col2])), fmt)
+                         formula.format(fcol1, fcol2), fmt)
 
     # Helper for choosing the right format for a cell
     def select_fmt(total, passed):
@@ -515,16 +577,19 @@ def generate_xlsx(path, tests):
 
 
 def generate_json(path, tests, pretty_print=False):
+    if not tests:
+        log.error("No finished testcases!")
+
     # Fix filename
     if not path.endswith('.json'):
         path += '.json'
 
-    log.info('Generating json results file "%s"', path)
+    log.info('Generating json results file "{}"'.format(path))
 
     results = []
 
     for test in tests:
-        log.debug("Got testcase %s", test.name)
+        log.debug("Got testcase {}".format(test.name))
         o = {'povs': {}, 'polls': {}}
         o['name'] = test.name
         o['povs']['total'] = test.povs_total
@@ -551,6 +616,10 @@ def generate_json(path, tests, pretty_print=False):
 
         results.append(o)
 
+    info = get_testrun_info()
+
+    results = {"info": info, "tests": results}
+
     with open(path, "w") as f:
         if pretty_print:
             json.dump(results, f,
@@ -563,13 +632,13 @@ def generate_json(path, tests, pretty_print=False):
 
 def generate_csv(path, tests):
     if not tests:
-        log.error("No testcases!")
+        log.error("No finished testcases!")
 
     # Fix filename
     if not path.endswith('.csv'):
         path += '.csv'
 
-    hog.info('Generating csv results file "{}"'.format(path))
+    log.info('Generating csv results file "{}"'.format(path))
 
     with open(path, "wb") as csvfile:
         cw = csv.writer(csvfile)
@@ -592,6 +661,12 @@ def generate_csv(path, tests):
                         povs.total, povs.passed]
 
             cw.writerow(row)
+
+    info = get_testrun_info()
+
+    with open(path + ".info", "w") as f:
+        for k, v in info.iteritems():
+            f.write("{} = {}".format(k, v))
 
 
 def listdir(path):
@@ -650,7 +725,7 @@ def main():
 
     parser.add_argument('-v', '--variants',
                         nargs="+",
-                        help="the variants that should be tested, format" +
+                        help="the variants that should be tested, format "
                              "'variant_name:vulnerable' e.g. 'patched:False'")
 
     parser.add_argument('--save-state',
@@ -709,6 +784,11 @@ def main():
         previous_tests = load_tests(args.state_file)
         log.info("loaded {} tests from previous state"
                  .format(len(previous_tests)))
+        log.debug("previous tests: " +
+                  ", ".join("{}: {}".format(t.name,
+                                            "done" if t.finished
+                                            else "pending")
+                            for t in previous_tests))
     else:
         previous_tests = []
 
@@ -737,7 +817,6 @@ def main():
             generate_json(os.path.abspath(args.output), tests)
         if args.csv:
             generate_csv(os.path.abspath(args.output), tests)
-            generate_json(os.path.abspath(args.output), tests)
 
 
 if __name__ == '__main__':
