@@ -4,6 +4,7 @@ import os
 import sys
 import logging
 import argparse
+import hashlib
 # python3 subprocess supports the timeout arg
 import subprocess as sp
 # python3 has the mp.get_context('spawn'), which we apparently need to
@@ -115,10 +116,15 @@ def setup_logging(console=True, logfile=None,
     return _log
 
 
+SEED = hashlib.sha512(str("3.141592653589793").encode("ascii") +
+                      str("2.718281828459045").encode("ascii")).hexdigest()
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHAL_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'processed-challenges')
 GEN_POLLS = os.path.join(TOOLS_DIR, "generate-polls", "generate-polls")
-GEN_POLLS_CMD = ['python2', '-B', GEN_POLLS, '--count', '500',  # '--repeat', '0',
+GEN_POLLS_CMD = ['python2', '-B', GEN_POLLS,
+                 '--count', '200',
+                 '--rounds', '3',
+                 '--seed', SEED,
                  '--store_seed']
 TIMEOUT = (60 * 10)
 
