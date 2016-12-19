@@ -118,6 +118,8 @@ def setup_logging(console=True, logfile=None,
 
 SEED = hashlib.sha512(str("3.141592653589793").encode("ascii") +
                       str("2.718281828459045").encode("ascii")).hexdigest()
+TIMEOUT = (60 * 10)
+MAX_COUNT = 200
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHAL_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'processed-challenges')
 GEN_POLLS = os.path.join(TOOLS_DIR, "generate-polls", "generate-polls")
@@ -126,7 +128,11 @@ GEN_POLLS_CMD = ['python2', '-B', GEN_POLLS,
                  '--rounds', '3',
                  '--seed', SEED,
                  '--store_seed']
-TIMEOUT = (60 * 10)
+POLLNUMS = [MAX_COUNT]
+i = MAX_COUNT
+while i > 1:
+    i = int(i // 2)
+    POLLNUMS.append(i)
 
 
 def split_all(path):
@@ -190,7 +196,7 @@ def gen_poll(path):
         return (path, False, "blacklisted")
 
     log.info("generating poll {}", pollid)
-    for pollnum in (500, 100, 10, 5, 3, 1):
+    for pollnum in POLLNUMS:
         lasttimeouted = False
         cmd = GEN_POLLS_CMD + [os.path.join(path, "machine.py"),
                                os.path.join(path, "state-graph.yaml"),
@@ -256,6 +262,8 @@ def gen_poll(path):
 
 
 def generate_polls(path, args):
+    save_list = args['save_list']
+    del args['save_list']
     pool = mp.get_context("spawn").Pool(processes=args['jobs'],
                                         initializer=init_from_args,
                                         initargs=(args, True))
@@ -266,31 +274,57 @@ def generate_polls(path, args):
                    for poll in polls)
         log.debug("processing polls:\n" + "\n".join(pollgen))
 
+    def list_files(path):
+        file_set = set([])
+        for root, dirs, files in os.walk(path):
+            for f in files:
+                file_set.add(os.path.join(root, f))
+        return file_set
+
+    files_prev = list_files(CHAL_DIR)
+
+    results = None
+    remove_files = False
     try:
         results = list(pool.imap_unordered(gen_poll, polls))
     except KeyboardInterrupt:
+        log.warning("terminating pool this might take a while!")
         sleep(2)
-        log.info("terminating pool")
         pool.terminate()
-        log.info("exiting")
-        sys.exit(-1)
+        remove_files = True
 
-    succeeded = sum(1 for _, success, _ in results if success)
-    failed = sum(1 for _, success, _ in results if not success)
-    timeouted = sum(1 for _, success, why in results
-                    if not success and "timeout" in why)
-    blacklisted = sum(1 for _, success, why in results
-                      if not success and "blacklist" in why)
-    log.info("poll generation: {:d} succeeded, {:d} failed " +
-             "({:d} timeouted, {:d} blacklisted, {:d} others)",
-             succeeded, failed, timeouted, blacklisted,
-             (failed - timeouted - blacklisted))
-    missing = [(os.path.join(*split_all(path)[-3:]), why)
-               for path, success, why in results if not success]
-    if missing:
-        log.warning("failed to generate polls:\n{}",
-                    "\n".join("{} -- {}".format(path, why)
-                              for path, why in missing))
+    files_after = list_files(CHAL_DIR)
+    generated_files = files_after - files_prev
+    if log.isEnabledFor(logging.DEBUG):
+        log.debug("generated the following files:\n{}",
+                  "\n".join(generated_files))
+
+    if remove_files:
+        log.warning("cleaning up generated files")
+        for f in generated_files:
+            log.debug("removing file {}", f)
+            os.remove(f)
+    elif save_list:
+        save_list.write("\n".join(generated_files))
+        save_list.write("\n")
+
+    if results:
+        succeeded = sum(1 for _, success, _ in results if success)
+        failed = sum(1 for _, success, _ in results if not success)
+        timeouted = sum(1 for _, success, why in results
+                        if not success and "timeout" in why)
+        blacklisted = sum(1 for _, success, why in results
+                          if not success and "blacklist" in why)
+        log.info("poll generation: {:d} succeeded, {:d} failed " +
+                 "({:d} timeouted, {:d} blacklisted, {:d} others)",
+                 succeeded, failed, timeouted, blacklisted,
+                 (failed - timeouted - blacklisted))
+        missing = [(os.path.join(*split_all(path)[-3:]), why)
+                   for path, success, why in results if not success]
+        if missing:
+            log.warning("failed to generate polls:\n{}",
+                        "\n".join("{} -- {}".format(path, why)
+                                  for path, why in missing))
 
 
 def main():
@@ -310,7 +344,11 @@ def main():
                         help='Number of parallel jobs (default = cpu_count())')
     parser.add_argument('-t', '--timeout',
                         default=(60 * 10), type=int,
-                        help='Timeout for one generate-polls subprocess (default = 10 min)')
+                        help='Timeout for one generate-polls subprocess.')
+    parser.add_argument('-S', '--save-list',
+                        default=os.path.join(CHAL_DIR, "..", "generated_polls.txt"),
+                        type=argparse.FileType('w'),
+                        help='save a list of generated files')
 
     args = vars(parser.parse_args(sys.argv[1:]))
 
