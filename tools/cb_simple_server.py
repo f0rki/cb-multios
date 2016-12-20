@@ -127,7 +127,12 @@ class ChallengeHandler(StreamRequestHandler):
         # Kill any remaining processes
         for proc in procs:
             if proc.poll() is None:
+                # first ask them to terminate nicely
                 proc.terminate()
+                time.sleep(1)
+                if proc.returncode is None:
+                    # if they haven't exited yet, just kill
+                    proc.kill()
 
         # Close all sockpairs
         map(lambda s: s.close(), socks)
