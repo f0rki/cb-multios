@@ -1,16 +1,19 @@
 #!/usr/bin/env python
 import argparse
-import glob
-import os
-# import subprocess
-import subprocess32 as subprocess
-import sys
-import logging
-import datetime
-import json
 import csv
+import datetime
+import glob
+import json
+import logging
+import os
+import sys
+# import subprocess
+
 from collections import OrderedDict
 from multiprocessing import cpu_count
+
+import subprocess32 as subprocess
+
 try:
     import cPickle as pickle
 except ImportError:
@@ -89,12 +92,13 @@ class Tester:
     polls_enabled = True
 
     def __init__(self, chal_name, variants=None,
-                 test_timeout=(60 * 60), test_tries=3):
+                 test_timeout=(60 * 60), test_tries=3, cb_timeout=5):
         self.name = chal_name
         self.finished = False
 
         self.test_tries = test_tries
         self.test_timeout = test_timeout
+        self.cb_timeout = cb_timeout
 
         # Directories used in testing
         self.chal_dir = os.path.join(CHAL_DIR, self.name)
@@ -200,7 +204,7 @@ class Tester:
                   '--directory', self.bin_dir,
                   '--xml_dir', xml_dir,
                   '--concurrent', str(cpu_count()),
-                  '--timeout', '5',
+                  '--timeout', str(self.cb_timeout),
                   '--negotiate_seed', '--cb'] + bin_names
         if should_core:
             cb_cmd += ['--should_core']
@@ -208,7 +212,7 @@ class Tester:
         for i in range(self.test_tries):
             self.log.debug("running command '{}' in dir '{}' (try {} / {})"
                            .format(" ".join(cb_cmd), TEST_DIR,
-                                   i, self.test_tries))
+                                   i + 1, self.test_tries))
             with subprocess.Popen(cb_cmd,
                                   cwd=TEST_DIR,
                                   stdout=subprocess.PIPE,
@@ -219,10 +223,11 @@ class Tester:
                     break  # out of tries loop on success
                 except subprocess.TimeoutExpired:
                     self.log.warning(("timeout after {} sec while running "
-                                      "cb-test (try {} / {})")
+                                      "cb-test (try {} / {}) cmd='{}'")
                                      .format(self.test_timeout,
-                                             i,
-                                             self.test_tries))
+                                             i + 1,
+                                             self.test_tries,
+                                             " ".join(cb_cmd)))
 
         total, passed, timedout = self.parse_results(out)
         return total, passed, timedout
@@ -319,7 +324,7 @@ class Tester:
 
 
 def test_challenges(chal_names, variants, previous_testers,
-                    test_tries, test_timeout):
+                    test_tries, test_timeout, cb_timeout):
     # type: (list) -> list
     # Filter out any challenges that don't exist
     chals = []
@@ -342,7 +347,8 @@ def test_challenges(chal_names, variants, previous_testers,
                for tester in map(lambda y: Tester(y,
                                                   variants=variants,
                                                   test_tries=test_tries,
-                                                  test_timeout=test_timeout),
+                                                  test_timeout=test_timeout,
+                                                  cb_timeout=cb_timeout),
                                  chals)
                if tester.name not in previous_testers}
     testers.update(previous_testers)
@@ -776,11 +782,16 @@ def main():
 
     parser.add_argument("--test-timeout",
                         default=(60 * 60), type=int,
-                        help="how long a test may take until it is aborted")
+                        help="how long a test of a CB in total may take until"
+                             " it is aborted.")
 
     parser.add_argument("--test-tries",
                         default=3, type=int,
                         help="how often to try a test in case of timeout")
+
+    parser.add_argument("--cb-timeout",
+                        default=(60 * 60), type=int,
+                        help="timeout for a single POV/POLL passed to cb-test")
 
     args = parser.parse_args(sys.argv[1:])
 
@@ -838,7 +849,8 @@ def main():
         previous_tests = []
 
     tests = test_challenges(chals, variants, previous_tests,
-                            args.test_tries, args.test_timeout)
+                            args.test_tries, args.test_timeout,
+                            args.cb_timeout)
 
     if args.save_state:
         save_tests(tests, args.state_file)

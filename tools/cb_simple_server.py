@@ -149,7 +149,11 @@ class ChallengeHandler(StreamRequestHandler):
             if proc.returncode not in [None, 0, signal.SIGTERM, signal.SIGABRT]:
                 # Print the return code
                 pid, sig = proc.pid, abs(proc.returncode)
-                stdout_flush('Process generated signal (pid: {}, signal: {}) - {}\n'.format(pid, sig, testpath))
+                sig_name = "unknown signal"
+                for k, v in signal.__dict__.iteritems():
+                    if v == sig and k.startswith("SIG") and not k.startswith("SIG_"):
+                        sig_name = k
+                stdout_flush('Process generated signal (pid: {}, signal: {} {}) - {}\n'.format(pid, sig, sig_name, testpath))
 
                 # Print register values
                 regs = self.get_core_dump_regs(pid)
