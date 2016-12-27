@@ -2,7 +2,8 @@
 import argparse
 import glob
 import os
-import subprocess
+# import subprocess
+import subprocess32 as subprocess
 import sys
 import logging
 import datetime
@@ -86,9 +87,13 @@ class Tester:
     povs_enabled = True
     polls_enabled = True
 
-    def __init__(self, chal_name, variants=None):
+    def __init__(self, chal_name, variants=None,
+                 test_timeout=(60 * 60), test_tries=3):
         self.name = chal_name
         self.finished = False
+
+        self.test_tries = test_tries
+        self.test_timeout = test_timeout
 
         # Directories used in testing
         self.chal_dir = os.path.join(CHAL_DIR, self.name)
@@ -199,12 +204,24 @@ class Tester:
         if should_core:
             cb_cmd += ['--should_core']
 
-        self.log.debug("running command '{}' in dir '{}'"
-                       .format(" ".join(cb_cmd), TEST_DIR))
-
-        p = subprocess.Popen(cb_cmd, cwd=TEST_DIR,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = p.communicate()
+        for i in range(self.test_tries):
+            self.log.debug("running command '{}' in dir '{}' (try {} / {})"
+                           .format(" ".join(cb_cmd), TEST_DIR,
+                                   i, self.test_tries))
+            with subprocess.Popen(cb_cmd,
+                                  cwd=TEST_DIR,
+                                  stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE,
+                                  preexec_fn=os.setsid) as p:
+                try:
+                    out, err = p.communicate(timeout=self.test_timeout)
+                    break  # out of tries loop on success
+                except subprocess.TimeoutExpired:
+                    self.log.warning(("timeout after {} sec while running "
+                                      "cb-test (try {} / {})")
+                                     .format(self.test_timeout,
+                                             i,
+                                             self.test_tries))
 
         total, passed, timedout = self.parse_results(out)
         return total, passed, timedout
@@ -300,7 +317,8 @@ class Tester:
         self.finished = True
 
 
-def test_challenges(chal_names, variants=None, previous_testers=[]):
+def test_challenges(chal_names, variants, previous_testers,
+                    test_tries, test_timeout):
     # type: (list) -> list
     # Filter out any challenges that don't exist
     chals = []
@@ -320,7 +338,11 @@ def test_challenges(chal_names, variants=None, previous_testers=[]):
     # Create and run all testers
     previous_testers = {tester.name: tester for tester in previous_testers}
     testers = {tester.name: tester
-               for tester in map(lambda y: Tester(y, variants=variants), chals)
+               for tester in map(lambda y: Tester(y,
+                                                  variants=variants,
+                                                  test_tries=test_tries,
+                                                  test_timeout=test_timeout),
+                                 chals)
                if tester.name not in previous_testers}
     testers.update(previous_testers)
 
@@ -741,6 +763,14 @@ def main():
                         default="./.state.pickle", type=str,
                         help="path to the state file")
 
+    parser.add_argument("--test-timeout",
+                        default=(60 * 60), type=int,
+                        help="how long a test may take until it is aborted")
+
+    parser.add_argument("--test-tries",
+                        default=3, type=int,
+                        help="how often to try a test in case of timeout")
+
     args = parser.parse_args(sys.argv[1:])
 
     # Disable other tests depending on args
@@ -789,10 +819,15 @@ def main():
                                             "done" if t.finished
                                             else "pending")
                             for t in previous_tests))
+        previous_tests = [test for test in previous_tests
+                          if test.finished]
+        log.info("Using {} finished tests from previous run"
+                 .format(len(previous_tests)))
     else:
         previous_tests = []
 
-    tests = test_challenges(chals, variants, previous_tests)
+    tests = test_challenges(chals, variants, previous_tests,
+                            args.test_tries, args.test_timeout)
 
     if args.save_state:
         save_tests(tests, args.state_file)
