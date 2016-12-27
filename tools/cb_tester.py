@@ -24,6 +24,7 @@ try:
 except ImportError:
     colorlog = None
 
+
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHAL_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'processed-challenges')
 TEST_DIR = os.path.join(TOOLS_DIR, 'cb-testing')
@@ -373,11 +374,18 @@ def test_challenges(chal_names, variants, previous_testers,
 
 def get_testrun_info():
     """
-    Return information on how the current test results where produced
+    Return information on how the current test results where produced.
+    Currently this contains:
+
+      - 'git-commit'
+      - 'buildtime'
+      - 'c-compiler'
+      - 'c-compiler-version'
+      - 'cpp-compiler'
+      - 'cpp-compiler-version'
 
     Returns:
-        A dictionary containing 'git-commit', 'buildtime', 'c-compiler',
-        'cpp-compiler'
+        A dictionary containing test environment information.
 
     """
     info = OrderedDict()
@@ -392,20 +400,23 @@ def get_testrun_info():
                 info["c-compiler"] = line.split("=")[1].strip()
             elif line.startswith("CMAKE_CXX_COMPILER:FILEPATH="):
                 info["cpp-compiler"] = line.split("=")[1].strip()
+
     for k in ('c-compiler', 'cpp-compiler'):
-        try:
-            o = subprocess.check_output([info[k], '--version'])
-            o = o.split("\n")[0]
-            info[k + '-version'] = o.strip()
-        except subprocess.CalledProcessError:
-            log.warning("compiler '{}' doesn't support '--version'"
-                        .format(info[k]))
+        if k in info:
+            try:
+                o = subprocess.check_output([info[k], '--version'])
+                o = o.split("\n")[0]
+                info[k + '-version'] = o.strip()
+            except subprocess.CalledProcessError:
+                log.warning("compiler '{}' doesn't support '--version'"
+                            .format(info[k]))
     return info
 
 
 def save_tests(tests, state_file):
     log.info("saving test state to {}".format(state_file))
     with open(state_file, "wb") as f:
+        # do not pickle unpicklable LogAdapter wrapper
         for test in tests:
             test.log = None
         pickle.dump(tests, f)
@@ -688,7 +699,7 @@ def generate_csv(path, tests):
 
     with open(path + ".info", "w") as f:
         for k, v in info.iteritems():
-            f.write("{} = {}".format(k, v))
+            f.write("{} = {}\n".format(k, v))
 
 
 def listdir(path):
