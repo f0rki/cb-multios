@@ -6,6 +6,7 @@ import glob
 import json
 import logging
 import os
+import signal
 import sys
 # import subprocess
 
@@ -228,6 +229,11 @@ class Tester:
                                              i + 1,
                                              self.test_tries,
                                              " ".join(cb_cmd)))
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except:
+                        log.debug("got exception during kill: ",
+                                  exc_info=sys.exc_info())
 
         total, passed, timedout = self.parse_results(out)
         return total, passed, timedout
