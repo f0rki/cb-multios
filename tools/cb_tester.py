@@ -234,6 +234,9 @@ class Tester:
                     except:
                         log.debug("got exception during kill: ",
                                   exc_info=sys.exc_info())
+        else:
+            self.log.error("Failed to run test for {} with command '{}'"
+                           .format(self.name, " ".join(cb_cmd)))
 
         total, passed, timedout = self.parse_results(out)
         return total, passed, timedout
