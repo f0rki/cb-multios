@@ -70,6 +70,10 @@ class TesterLogAdapter(logging.LoggerAdapter):
         return "[{}] {}".format(self.extra['cbname'], msg), kwargs
 
 
+class TestTimeoutExpired(Exception):
+    pass
+
+
 class Score:
     """Contains the results of a test"""
 
@@ -230,13 +234,18 @@ class Tester:
                                              self.test_tries,
                                              " ".join(cb_cmd)))
                     try:
+                        # hopefully this will destroy all remaining
+                        # subprocesses etc.
                         os.killpg(p.pid, signal.SIGKILL)
                     except:
                         log.debug("got exception during kill: ",
                                   exc_info=sys.exc_info())
         else:
-            self.log.error("Failed to run test for {} with command '{}'"
-                           .format(self.name, " ".join(cb_cmd)))
+            self.log.warning(("Test timeouted after {} tries for {}"
+                              " with command '{}'")
+                             .format(self.test_tries, self.name,
+                                     " ".join(cb_cmd)))
+            raise TestTimeoutExpired()
 
         total, passed, timedout = self.parse_results(out)
         return total, passed, timedout
@@ -258,8 +267,8 @@ class Tester:
             self.log.info('No tests found in "{}"'.format(xml_dir))
             return
 
-        # *2 because each test is run against the patched and unpatched binary
-        self.log.info('Running {} test(s)'.format(len(tests) * 2))
+        self.log.info('Running {} test(s)'
+                      .format(len(tests) * len(self.variants)))
 
         # Collect the names of binaries to be tested
         cb_dirs = glob.glob(os.path.join(self.chal_dir, 'cb_*'))
@@ -284,9 +293,14 @@ class Tester:
                 should_core = False
 
             start = datetime.datetime.now()
-            t, p, to = self.run_test(['{}{}{}'.format(b, "_" if pf else "", pf)
-                                      for b in bin_names],
-                                     xml_dir, should_core=should_core)
+            try:
+                t, p, to = self.run_test(['{}{}{}'
+                                          .format(b, "_" if pf else "", pf)
+                                          for b in bin_names],
+                                         xml_dir, should_core=should_core)
+
+            except TestTimeoutExpired:
+                t, p, to = len(tests), 0, len(tests)
 
             stop = datetime.datetime.now()
             dur = stop - start
@@ -299,6 +313,7 @@ class Tester:
                                   mins, secs))
             score.total += t
             score.passed += p
+
             # TODO: remove this ugly hack
             if "timeouted" not in score.__dict__:
                 score.timeouted = 0
