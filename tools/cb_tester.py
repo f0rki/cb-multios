@@ -1,15 +1,20 @@
 #!/usr/bin/env python
 import argparse
-import glob
-import os
-import subprocess
-import sys
-import logging
-import datetime
-import json
 import csv
+import datetime
+import glob
+import json
+import logging
+import os
+import signal
+import sys
+# import subprocess
+
 from collections import OrderedDict
 from multiprocessing import cpu_count
+
+import subprocess32 as subprocess
+
 try:
     import cPickle as pickle
 except ImportError:
@@ -22,6 +27,7 @@ try:
     import colorlog
 except ImportError:
     colorlog = None
+
 
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHAL_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'processed-challenges')
@@ -86,9 +92,14 @@ class Tester:
     povs_enabled = True
     polls_enabled = True
 
-    def __init__(self, chal_name, variants=None):
+    def __init__(self, chal_name, variants=None,
+                 test_timeout=(60 * 60), test_tries=3, cb_timeout=5):
         self.name = chal_name
         self.finished = False
+
+        self.test_tries = test_tries
+        self.test_timeout = test_timeout
+        self.cb_timeout = cb_timeout
 
         # Directories used in testing
         self.chal_dir = os.path.join(CHAL_DIR, self.name)
@@ -194,17 +205,35 @@ class Tester:
                   '--directory', self.bin_dir,
                   '--xml_dir', xml_dir,
                   '--concurrent', str(cpu_count()),
-                  '--timeout', '5',
+                  '--timeout', str(self.cb_timeout),
                   '--negotiate_seed', '--cb'] + bin_names
         if should_core:
             cb_cmd += ['--should_core']
 
-        self.log.debug("running command '{}' in dir '{}'"
-                       .format(" ".join(cb_cmd), TEST_DIR))
-
-        p = subprocess.Popen(cb_cmd, cwd=TEST_DIR,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = p.communicate()
+        for i in range(self.test_tries):
+            self.log.debug("running command '{}' in dir '{}' (try {} / {})"
+                           .format(" ".join(cb_cmd), TEST_DIR,
+                                   i + 1, self.test_tries))
+            with subprocess.Popen(cb_cmd,
+                                  cwd=TEST_DIR,
+                                  stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE,
+                                  preexec_fn=os.setsid) as p:
+                try:
+                    out, err = p.communicate(timeout=self.test_timeout)
+                    break  # out of tries loop on success
+                except subprocess.TimeoutExpired:
+                    self.log.warning(("timeout after {} sec while running "
+                                      "cb-test (try {} / {}) cmd='{}'")
+                                     .format(self.test_timeout,
+                                             i + 1,
+                                             self.test_tries,
+                                             " ".join(cb_cmd)))
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except:
+                        log.debug("got exception during kill: ",
+                                  exc_info=sys.exc_info())
 
         total, passed, timedout = self.parse_results(out)
         return total, passed, timedout
@@ -300,7 +329,8 @@ class Tester:
         self.finished = True
 
 
-def test_challenges(chal_names, variants=None, previous_testers=[]):
+def test_challenges(chal_names, variants, previous_testers,
+                    test_tries, test_timeout, cb_timeout):
     # type: (list) -> list
     # Filter out any challenges that don't exist
     chals = []
@@ -320,7 +350,12 @@ def test_challenges(chal_names, variants=None, previous_testers=[]):
     # Create and run all testers
     previous_testers = {tester.name: tester for tester in previous_testers}
     testers = {tester.name: tester
-               for tester in map(lambda y: Tester(y, variants=variants), chals)
+               for tester in map(lambda y: Tester(y,
+                                                  variants=variants,
+                                                  test_tries=test_tries,
+                                                  test_timeout=test_timeout,
+                                                  cb_timeout=cb_timeout),
+                                 chals)
                if tester.name not in previous_testers}
     testers.update(previous_testers)
 
@@ -351,11 +386,18 @@ def test_challenges(chal_names, variants=None, previous_testers=[]):
 
 def get_testrun_info():
     """
-    Return information on how the current test results where produced
+    Return information on how the current test results where produced.
+    Currently this contains:
+
+      - 'git-commit'
+      - 'buildtime'
+      - 'c-compiler'
+      - 'c-compiler-version'
+      - 'cpp-compiler'
+      - 'cpp-compiler-version'
 
     Returns:
-        A dictionary containing 'git-commit', 'buildtime', 'c-compiler',
-        'cpp-compiler'
+        A dictionary containing test environment information.
 
     """
     info = OrderedDict()
@@ -370,20 +412,23 @@ def get_testrun_info():
                 info["c-compiler"] = line.split("=")[1].strip()
             elif line.startswith("CMAKE_CXX_COMPILER:FILEPATH="):
                 info["cpp-compiler"] = line.split("=")[1].strip()
+
     for k in ('c-compiler', 'cpp-compiler'):
-        try:
-            o = subprocess.check_output([info[k], '--version'])
-            o = o.split("\n")[0]
-            info[k + '-version'] = o.strip()
-        except subprocess.CalledProcessError:
-            log.warning("compiler '{}' doesn't support '--version'"
-                        .format(info[k]))
+        if k in info:
+            try:
+                o = subprocess.check_output([info[k], '--version'])
+                o = o.split("\n")[0]
+                info[k + '-version'] = o.strip()
+            except subprocess.CalledProcessError:
+                log.warning("compiler '{}' doesn't support '--version'"
+                            .format(info[k]))
     return info
 
 
 def save_tests(tests, state_file):
     log.info("saving test state to {}".format(state_file))
     with open(state_file, "wb") as f:
+        # do not pickle unpicklable LogAdapter wrapper
         for test in tests:
             test.log = None
         pickle.dump(tests, f)
@@ -666,7 +711,7 @@ def generate_csv(path, tests):
 
     with open(path + ".info", "w") as f:
         for k, v in info.iteritems():
-            f.write("{} = {}".format(k, v))
+            f.write("{} = {}\n".format(k, v))
 
 
 def listdir(path):
@@ -741,6 +786,19 @@ def main():
                         default="./.state.pickle", type=str,
                         help="path to the state file")
 
+    parser.add_argument("--test-timeout",
+                        default=(60 * 60), type=int,
+                        help="how long a test of a CB in total may take until"
+                             " it is aborted.")
+
+    parser.add_argument("--test-tries",
+                        default=3, type=int,
+                        help="how often to try a test in case of timeout")
+
+    parser.add_argument("--cb-timeout",
+                        default=5, type=int,
+                        help="timeout for a single POV/POLL passed to cb-test")
+
     args = parser.parse_args(sys.argv[1:])
 
     # Disable other tests depending on args
@@ -789,10 +847,16 @@ def main():
                                             "done" if t.finished
                                             else "pending")
                             for t in previous_tests))
+        previous_tests = [test for test in previous_tests
+                          if test.finished]
+        log.info("Using {} finished tests from previous run"
+                 .format(len(previous_tests)))
     else:
         previous_tests = []
 
-    tests = test_challenges(chals, variants, previous_tests)
+    tests = test_challenges(chals, variants, previous_tests,
+                            args.test_tries, args.test_timeout,
+                            args.cb_timeout)
 
     if args.save_state:
         save_tests(tests, args.state_file)
