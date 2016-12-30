@@ -187,7 +187,7 @@ function(build path target)
 
         set(variant ${target}_cpi)
         add_executable(${variant} ${cb_all_src})
-        target_include_directories(${target}_wit PUBLIC ${path}/lib ${path}/src ${path}/include)
+        target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
         target_link_libraries(${variant} LINK_PUBLIC cgc)
         target_compile_options("${variant}" PUBLIC -flto -fuse-ld=/usr/bin/ld.gold)
     endif()
