@@ -77,6 +77,7 @@ if($ENV{CPIEVAL})
     set(CPIEVAL True)
     message("CPI enabled. Disabling incompatible build types!")
     set(CFIEVAL false)
+    # this is upstream safestack, CPI also uses same safestack
     set(SAFESTACKEVAL false)
     set(WITEVAL false)
 
@@ -85,9 +86,7 @@ if($ENV{CPIEVAL})
 
     set(CPI_CLANG "${CPIPATH}/build/bin/clang")
     set(CPI_CLANGPP "${CPIPATH}/build/bin/clang++")
-    # TODO: figure out cli params for CPI instrumentation
-    #set(CPI_CFLAGS )
-    #set(CPI_CXXFLAGS )
+    
     set(CMAKE_ASM_COMPILER ${CPI_CLANG})
     set(CMAKE_C_COMPILER ${CPI_CLANG})
     set(CMAKE_CXX_COMPILER ${CPI_CLANGPP})
@@ -183,13 +182,25 @@ function(build path target)
     endif()
 
     if(${CPIEVAL})
-        message("Building ${target} with CPI enabled")
+        message("Building ${target} with CPI/CPS enabled")
 
         set(variant ${target}_cpi)
         add_executable(${variant} ${cb_all_src})
         target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
         target_link_libraries(${variant} LINK_PUBLIC cgc)
-        target_compile_options("${variant}" PUBLIC -flto -fuse-ld=/usr/bin/ld.gold)
+        target_compile_options("${variant}" PUBLIC -fsafe-stack -fcpi)
+        set_target_properties(${variant}
+            PROPERTIES
+            LINK_FLAGS " -fuse-ld=/usr/bin/ld.gold ")
+
+        set(variant ${target}_cps)
+        add_executable(${variant} ${cb_all_src})
+        target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
+        target_link_libraries(${variant} LINK_PUBLIC cgc)
+        target_compile_options("${variant}" PUBLIC -fsafe-stack -fcps)
+        set_target_properties(${variant}
+            PROPERTIES
+            LINK_FLAGS " -fuse-ld=/usr/bin/ld.gold ")
     endif()
 
 endfunction(build)
