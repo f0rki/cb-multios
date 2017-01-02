@@ -12,7 +12,6 @@ set(CMAKE_CXX_STANDARD 11)
 add_compile_options(
     -fno-builtin
     -Wno-int-to-pointer-cast
-    -Wno-writable-strings
     -g3
     -m32
 )
@@ -90,6 +89,10 @@ if($ENV{CPIEVAL})
     set(CMAKE_ASM_COMPILER ${CPI_CLANG})
     set(CMAKE_C_COMPILER ${CPI_CLANG})
     set(CMAKE_CXX_COMPILER ${CPI_CLANGPP})
+
+else()
+
+    add_compile_options(-Wno-writable-strings)
 endif()
 
 # Build all libraries
@@ -188,19 +191,19 @@ function(build path target)
         add_executable(${variant} ${cb_all_src})
         target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
         target_link_libraries(${variant} LINK_PUBLIC cgc)
-        target_compile_options("${variant}" PUBLIC -fsafe-stack -fcpi)
+        target_compile_options("${variant}" PUBLIC -flto -fcpi)
         set_target_properties(${variant}
             PROPERTIES
-            LINK_FLAGS " -fuse-ld=/usr/bin/ld.gold ")
+            LINK_FLAGS " -flto -fuse-ld=/usr/bin/ld.gold -fcpi ")
 
         set(variant ${target}_cps)
         add_executable(${variant} ${cb_all_src})
         target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
         target_link_libraries(${variant} LINK_PUBLIC cgc)
-        target_compile_options("${variant}" PUBLIC -fsafe-stack -fcps)
+        target_compile_options("${variant}" PUBLIC -flto -fcps)
         set_target_properties(${variant}
             PROPERTIES
-            LINK_FLAGS " -fuse-ld=/usr/bin/ld.gold ")
+            LINK_FLAGS " -flto -fuse-ld=/usr/bin/ld.gold -fcps ")
     endif()
 
 endfunction(build)
@@ -267,12 +270,13 @@ add_compile_options(
     -nostdinc
     -fno-stack-protector
 )
+
 add_definitions(
     -Derrno=__cgc_errno
     -DFORTIFY_SOURCE=0
 )
 
-if(LINUX)
+if(LINUX AND NOT CPIEVAL)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z execstack -z norelro")
 endif()
 
