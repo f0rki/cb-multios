@@ -116,6 +116,11 @@ function(build path target)
     # Add patched defines
     target_compile_definitions(${target}_patched PUBLIC "${patch_defs}")
     target_link_libraries(${target}_patched LINK_PUBLIC cgc)
+    
+    if(${CPIEVAL})
+        target_link_libraries(${target} LINK_PUBLIC cgc m)
+        target_link_libraries(${target}_patched LINK_PUBLIC cgc m)
+    endif()
 
     if(${WITEVAL})
         message("Building ${target} with WIT enabled")
@@ -190,7 +195,7 @@ function(build path target)
         set(variant ${target}_cpi)
         add_executable(${variant} ${cb_all_src})
         target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
-        target_link_libraries(${variant} LINK_PUBLIC cgc m)
+        target_link_libraries(${variant} LINK_PUBLIC m cgc)
         target_compile_options("${variant}" PUBLIC -flto )
         set_target_properties(${variant}
             PROPERTIES
@@ -199,7 +204,7 @@ function(build path target)
         set(variant ${target}_cps)
         add_executable(${variant} ${cb_all_src})
         target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
-        target_link_libraries(${variant} LINK_PUBLIC cgc m)
+        target_link_libraries(${variant} LINK_PUBLIC m cgc)
         target_compile_options("${variant}" PUBLIC -flto )
         set_target_properties(${variant}
             PROPERTIES
@@ -227,6 +232,10 @@ function(buildPOV path cb pov)
     )
 
     target_link_libraries(${target} LINK_PUBLIC cgc pov)
+
+    if(${CPIEVAL})
+        target_link_libraries(${target} LINK_PUBLIC m)
+    endif()
 endfunction(buildPOV)
 
 
