@@ -190,8 +190,8 @@ function(build path target)
         set(variant ${target}_cpi)
         add_executable(${variant} ${cb_all_src})
         target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
-        target_link_libraries(${variant} LINK_PUBLIC cgc)
-        target_compile_options("${variant}" PUBLIC -flto -fcpi)
+        target_link_libraries(${variant} LINK_PUBLIC cgc m)
+        target_compile_options("${variant}" PUBLIC -flto )
         set_target_properties(${variant}
             PROPERTIES
             LINK_FLAGS " -flto -fuse-ld=/usr/bin/ld.gold -fcpi ")
@@ -199,8 +199,8 @@ function(build path target)
         set(variant ${target}_cps)
         add_executable(${variant} ${cb_all_src})
         target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
-        target_link_libraries(${variant} LINK_PUBLIC cgc)
-        target_compile_options("${variant}" PUBLIC -flto -fcps)
+        target_link_libraries(${variant} LINK_PUBLIC cgc m)
+        target_compile_options("${variant}" PUBLIC -flto )
         set_target_properties(${variant}
             PROPERTIES
             LINK_FLAGS " -flto -fuse-ld=/usr/bin/ld.gold -fcps ")
