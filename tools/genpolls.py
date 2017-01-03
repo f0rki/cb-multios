@@ -26,6 +26,7 @@ except ImportError:
 # of creating mp workers.
 # Fortunately this doesn't seem to come up on my machines... But maybe it
 # should be fixed?
+# TODO: maybe we can use threads instead of mp
 
 
 class BraceMessage(object):
@@ -305,7 +306,8 @@ def generate_polls(path, args):
             log.debug("removing file {}", f)
             os.remove(f)
     elif save_list:
-        save_list.write("\n".join(generated_files))
+        save_list.write("\n".join(x.replace(CHAL_DIR, "")
+                                  for x in sorted(generated_files)))
         save_list.write("\n")
 
     if results:
