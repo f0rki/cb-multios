@@ -164,9 +164,17 @@ def is_blacklisted_poller(path):
     return False
 
 
+def listdir(path, hidden=False):
+    # type: (str) -> list
+    if not os.path.isdir(path):
+        return []
+    return sorted((p for p in os.listdir(path) if hidden or p[0] != "."),
+                  key=lambda s: s.lower())
+
+
 def find_polls(path):
-    for chal in os.listdir(path):
-        for poller in os.listdir(os.path.join(path, chal, "poller")):
+    for chal in listdir(path):
+        for poller in listdir(os.path.join(path, chal, "poller")):
             yield os.path.join(path, chal, "poller", poller)
 
 
