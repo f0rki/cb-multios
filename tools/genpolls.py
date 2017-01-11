@@ -346,7 +346,7 @@ def main():
                         default=(60 * 10), type=int,
                         help='Timeout for one generate-polls subprocess.')
     parser.add_argument('-S', '--save-list',
-                        default=os.path.join(CHAL_DIR, "..", "generated_polls.txt"),
+                        default=os.path.join(CHAL_DIR, ".generated_polls.txt"),
                         type=argparse.FileType('w'),
                         help='save a list of generated files')
 

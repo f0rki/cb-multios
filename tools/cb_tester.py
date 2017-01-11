@@ -732,11 +732,12 @@ def generate_csv(path, tests):
             f.write("{} = {}\n".format(k, v))
 
 
-def listdir(path):
+def listdir(path, hidden=False):
     # type: (str) -> list
     if not os.path.isdir(path):
         return []
-    return sorted(os.listdir(path), key=lambda s: s.lower())
+    return sorted((p for p in os.listdir(path) if hidden or p[0] != "."),
+                  key=lambda s: s.lower())
 
 
 def main():
@@ -801,7 +802,8 @@ def main():
                         help="load the state of cb test results and continue")
 
     parser.add_argument("--state-file",
-                        default="./.state.pickle", type=str,
+                        default=os.path.join(CHAL_DIR, ".state.pickle"),
+                        type=str,
                         help="path to the state file")
 
     parser.add_argument("--test-timeout",
