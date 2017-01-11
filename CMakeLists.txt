@@ -85,11 +85,14 @@ if($ENV{CPIEVAL})
 
     set(CPI_CLANG "${CPIPATH}/build/bin/clang")
     set(CPI_CLANGPP "${CPIPATH}/build/bin/clang++")
-    
+
     set(CMAKE_ASM_COMPILER ${CPI_CLANG})
     set(CMAKE_C_COMPILER ${CPI_CLANG})
     set(CMAKE_CXX_COMPILER ${CPI_CLANGPP})
 
+    # workaround, because clang 3.3 requires this and there is a problem with
+    # c++ flags in the build system
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 else()
 
     add_compile_options(-Wno-writable-strings)
@@ -116,6 +119,11 @@ function(build path target)
     # Add patched defines
     target_compile_definitions(${target}_patched PUBLIC "${patch_defs}")
     target_link_libraries(${target}_patched LINK_PUBLIC cgc)
+
+    if(${CPIEVAL})
+        target_link_libraries(${target} LINK_PUBLIC cgc m)
+        target_link_libraries(${target}_patched LINK_PUBLIC cgc m)
+    endif()
 
     if(${WITEVAL})
         message("Building ${target} with WIT enabled")
@@ -190,8 +198,8 @@ function(build path target)
         set(variant ${target}_cpi)
         add_executable(${variant} ${cb_all_src})
         target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
-        target_link_libraries(${variant} LINK_PUBLIC cgc)
-        target_compile_options("${variant}" PUBLIC -flto -fcpi)
+        target_link_libraries(${variant} LINK_PUBLIC m cgc)
+        target_compile_options("${variant}" PUBLIC -flto )
         set_target_properties(${variant}
             PROPERTIES
             LINK_FLAGS " -flto -fuse-ld=/usr/bin/ld.gold -fcpi ")
@@ -199,8 +207,8 @@ function(build path target)
         set(variant ${target}_cps)
         add_executable(${variant} ${cb_all_src})
         target_include_directories(${variant} PUBLIC ${path}/lib ${path}/src ${path}/include)
-        target_link_libraries(${variant} LINK_PUBLIC cgc)
-        target_compile_options("${variant}" PUBLIC -flto -fcps)
+        target_link_libraries(${variant} LINK_PUBLIC m cgc)
+        target_compile_options("${variant}" PUBLIC -flto )
         set_target_properties(${variant}
             PROPERTIES
             LINK_FLAGS " -flto -fuse-ld=/usr/bin/ld.gold -fcps ")
@@ -227,6 +235,10 @@ function(buildPOV path cb pov)
     )
 
     target_link_libraries(${target} LINK_PUBLIC cgc pov)
+
+    if(${CPIEVAL})
+        target_link_libraries(${target} LINK_PUBLIC m)
+    endif()
 endfunction(buildPOV)
 
 
