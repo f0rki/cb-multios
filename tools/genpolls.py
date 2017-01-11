@@ -80,7 +80,7 @@ class MultilineFilter(logging.Filter):
 
             for k, v in record.msg.kwargs:
                 if isinstance(v, str) and "\n" in v:
-                    record.msg.kwargs[k] = sanitize(v)
+                    record.msg.kwargs[k] = self.sanitize(v)
         elif isinstance(record.msg, str):
             record.msg = self.sanitize(record.msg)
         return super(MultilineFilter, self).filter(record)
