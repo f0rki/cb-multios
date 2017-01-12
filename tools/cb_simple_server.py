@@ -153,11 +153,15 @@ class ChallengeHandler(StreamRequestHandler):
                 for k, v in signal.__dict__.iteritems():
                     if v == sig and k.startswith("SIG") and not k.startswith("SIG_"):
                         sig_name = k
-                stdout_flush('Process generated signal (pid: {}, signal: {} {}) - {}\n'.format(pid, sig, sig_name, testpath))
+                stdout_flush('[DEBUG] pid: {}, signal: {} {}, testpath: {}\n'.format(pid, sig, sig_name, testpath))
 
-                # Print register values
+                # Attempt to get register values
                 regs = self.get_core_dump_regs(pid)
                 if regs is not None:
+                    # If a core dump was generated, report this as a crash
+                    stdout_flush('Process generated signal (pid: {}, signal: {}) - {}\n'.format(pid, sig, testpath))
+
+                    # Report the register states
                     reg_str = ' '.join(['{}:{}'.format(reg, val) for reg, val in regs.iteritems()])
                     stdout_flush('register states - {}\n'.format(reg_str))
 
