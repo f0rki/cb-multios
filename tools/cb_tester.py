@@ -883,6 +883,8 @@ def main():
 
     # save only finished tests to results output
     tests = [test for test in tests if test.finished]
+    # sort tests according to cb name
+    tests = sorted(tests, key=lambda x: x.name)
 
     log.info("Finished {} tests".format(len(tests)))
 
