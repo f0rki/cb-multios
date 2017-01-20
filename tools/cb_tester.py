@@ -33,6 +33,7 @@ TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHAL_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'processed-challenges')
 TEST_DIR = os.path.join(TOOLS_DIR, 'cb-testing')
 BUILD_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'build')
+CONTINUOUS_SAVE_AFTER = 5
 log = None
 
 
@@ -358,15 +359,17 @@ class Tester:
         if Tester.polls_enabled:
             for subdir in listdir(self.poll_dir):
                 self.log.info('running POLL {}'.format(subdir))
-                self.run_against_dir(os.path.join(
-                    self.poll_dir, subdir), self.polls)
+                self.run_against_dir(os.path.join(self.poll_dir, subdir),
+                                     self.polls)
+
         self.log.info('Done testing {} => Passed {}/{} tests'
                       .format(self.name, self.passed, self.total))
         self.finished = True
 
 
 def test_challenges(chal_names, variants, previous_testers,
-                    test_tries, test_timeout, cb_timeout):
+                    test_tries, test_timeout, cb_timeout,
+                    state_save_file=None):
     # type: (list) -> list
     # Filter out any challenges that don't exist
     chals = []
@@ -407,6 +410,11 @@ def test_challenges(chal_names, variants, previous_testers,
                 log.info("Running test {}/{} '{}'"
                          .format(i + 1, len(testers), test.name))
                 test.run()
+
+            if state_save_file and i % CONTINUOUS_SAVE_AFTER == 1:
+                log.info("saving state file after {}/{} tests"
+                         .format(i + 1, len(testers)))
+                save_tests_state(list(testers.values()), state_save_file)
     except KeyboardInterrupt:
         log.info("User abort during test {}/{} '{}'"
                  .format(i + 1, len(testers), test.name))
@@ -466,13 +474,16 @@ def get_testrun_info():
     return info
 
 
-def save_tests(tests, state_file):
+def save_tests_state(tests, state_file):
     log.info("saving test state to {}".format(state_file))
     with open(state_file, "wb") as f:
         # do not pickle unpicklable LogAdapter wrapper
         for test in tests:
             test.log = None
         pickle.dump(tests, f)
+    # restore logadapter, in case they are used later on (e.g. continuous save)
+    for test in tests:
+        test._setup_log_adapter()
 
 
 def load_tests(state_file):
@@ -833,6 +844,10 @@ def main():
                         help="store the state of unfinished/finished test"
                              "results")
 
+    parser.add_argument('--continuous-save',
+                        action='store_true',
+                        help="enable continuous saving of the state file")
+
     parser.add_argument('--load-state',
                         action='store_true',
                         help="load the state of cb test results and continue")
@@ -918,10 +933,11 @@ def main():
 
     tests = test_challenges(chals, variants, previous_tests,
                             args.test_tries, args.test_timeout,
-                            args.cb_timeout)
+                            args.cb_timeout,
+                            args.state_file if args.continuous_save else None)
 
-    if args.save_state:
-        save_tests(tests, args.state_file)
+    if args.save_state or args.continuous_save:
+        save_tests_state(tests, args.state_file)
 
     # save only finished tests to results output
     tests = [test for test in tests if test.finished]
