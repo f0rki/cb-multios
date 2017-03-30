@@ -41,6 +41,19 @@ case $LINK in
     STATIC) CMAKE_OPTS="$CMAKE_OPTS -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON";;
 esac
 
+
+if [[ $WITEVAL == 1 ]]; then
+    echo "Patching CMakeLists.txt with no-vectorize CFLAGS"
+    # add the following compiler flags to all the generated CMakeLists.txt files
+    #    -fno-vectorize
+    #    -fno-slp-vectorize
+    # right after the -ON flag, so that it overrides the optimizer defaults
+    for cmakelists in $(find ../processed-challenges -name CMakeLists.txt); do
+        echo "$cmakelists"
+        sed -i 's/\(-O[0-4sz]\)/\1 -fno-vectorize -fno-slp-vectorize/g' $cmakelists
+    done
+fi
+
 # Prefer ninja over make, if it is available
 if which ninja 2>&1 >/dev/null; then
   CMAKE_OPTS="-G Ninja $CMAKE_OPTS"
