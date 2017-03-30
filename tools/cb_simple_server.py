@@ -10,6 +10,7 @@ import time
 import thread
 from SocketServer import ForkingTCPServer, StreamRequestHandler
 import signal
+import shutil
 
 # For OS specific tasks
 IS_DARWIN = sys.platform == 'darwin'
@@ -44,6 +45,14 @@ class ChallengeHandler(StreamRequestHandler):
     def handle(self):
         # Setup fds for all challenges according to:
         # https://github.com/CyberGrandChallenge/cgc-release-documentation/blob/master/newsletter/ipc.md
+
+        self.core_fmt = "core.{pid}"
+        if IS_DARWIN:
+            self.core_dir = "/cores/"
+        elif IS_LINUX:
+            self.core_dir = "./coredumps/"
+            if not os.path.exists(self.core_dir):
+                os.mkdir(self.core_dir)
 
         # Get the test path for logging purposes
         testpath = self.rfile.readline()
@@ -100,7 +109,15 @@ class ChallengeHandler(StreamRequestHandler):
 
         # Start all challenges
         cb_env = {'seed': seed}
-        procs = [subprocess.Popen(c, env=cb_env) for c in self.challenges]
+        if "LD_LIBRARY_PATH" in os.environ:
+            cb_env['LD_LIBRARY_PATH'] = os.environ['LD_LIBRARY_PATH']
+
+        def start_sp(c):
+            p = subprocess.Popen(c, env=cb_env)
+            p.name = c
+            return p
+
+        procs = [start_sp(c) for c in self.challenges]
 
         # Send a signal to cb-replay to tell it the challenges are ready
         # NOTE: cb-replay has been modified to wait for this
@@ -153,14 +170,13 @@ class ChallengeHandler(StreamRequestHandler):
                 for k, v in signal.__dict__.iteritems():
                     if v == sig and k.startswith("SIG") and not k.startswith("SIG_"):
                         sig_name = k
-                stdout_flush('[DEBUG] pid: {}, signal: {} {}, testpath: {}\n'.format(pid, sig, sig_name, testpath))
+                # warning: do not change this as it is parsed by cb-test. If
+                # you do adapt sig_re in Runner.check_result
+                stdout_flush('Process generated signal (pid: {}, signal: {} {}) - {}\n'.format(pid, sig, sig_name, testpath))
 
-                # Attempt to get register values
-                regs = self.get_core_dump_regs(pid)
+                # Print register values
+                regs = self.get_core_dump_regs(proc)
                 if regs is not None:
-                    # If a core dump was generated, report this as a crash
-                    stdout_flush('Process generated signal (pid: {}, signal: {}) - {}\n'.format(pid, sig, testpath))
-
                     # Report the register states
                     reg_str = ' '.join(['{}:{}'.format(reg, val) for reg, val in regs.iteritems()])
                     stdout_flush('register states - {}\n'.format(reg_str))
@@ -168,33 +184,69 @@ class ChallengeHandler(StreamRequestHandler):
         # Final cleanup
         self.clean_cores(procs)
 
-    def get_core_dump_regs(self, pid):
+    def get_core_dump_regs(self, proc):
         """ Read all register values from a core dump
         On OS X, all core dumps are stored as /cores/core.[pid]
-        On Linux, the core dump is stored as a 'core' file in the cwd
+        On Linux, the core dump is stored as a 'core' file in the cwd.
+        On Linux sith systemd, the core dump might be handled by
+        systemd-coredump in reality.
 
         Args:
-            pid (int): pid of the process that generated the core dump
+            proc (subprocess.Popen): info about process that generated the core
+                                     dump (requires .name and .pid)
         Returns:
             (dict): Registers and their values
         """
         # Create a gdb/lldb command to get regs
+        corefile = os.path.join(self.core_dir,
+                                self.core_fmt.format(pid=proc.pid))
         if IS_DARWIN:
             cmd = [
                 'lldb',
-                '--core', '/cores/core.{}'.format(pid),
+                '--core', corefile,
                 '--batch', '--one-line', 'register read'
             ]
         elif IS_LINUX:
+            if os.path.exists("./core"):
+                shutil.move("./core", corefile)
+
+            if not os.path.exists(corefile):
+                stdout_flush("no core file found in current directory."
+                             " trying coredumpctl\n")
+                cmd = ['coredumpctl', '--output=' + corefile, '-1',
+                       'dump', str(proc.name), str(proc.pid)]
+                # wait a little until the coredump is processed
+                time.sleep(0.3)
+                # then try to fetch the core file
+                try:
+                    p = subprocess.Popen(cmd,
+                                         stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE)
+                except OSError as e:
+                    stdout_flush("no coredumpctl found: " + str(e))
+                o, e = p.communicate()
+                if p.returncode != 0 or not os.path.exists(corefile):
+                    stdout_flush("coredumpctl failed - cmd: " +
+                                 " ".join(cmd) + "\n")
             cmd = [
                 'gdb',
-                '--core', 'core',
+                '--core', corefile,
                 '--batch', '-ex', 'info registers'
             ]
 
+        if not os.path.exists(corefile):
+            stdout_flush('Core dump not found, are they enabled on your system?\n')
+            return
+
         # Read the registers
-        dbg_out = '\n'.join(subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate())
-        if 'No such file or directory' in dbg_out or "doesn't exist" in dbg_out:
+        p = subprocess.Popen(cmd,
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
+        dbg_out, dbg_err = p.communicate()
+        check = dbg_out + "\n" + dbg_err
+        if p.returncode != 0 or \
+                'No such file or directory' in check or \
+                "doesn't exist" in check:
             stdout_flush('Core dump not found, are they enabled on your system?\n')
             return
 
@@ -214,10 +266,11 @@ class ChallengeHandler(StreamRequestHandler):
         Args:
             procs (list): List of all processes that may have generated core dumps
         """
-        if IS_DARWIN:
-            map(try_delete, ['/cores/core.{}'.format(p.pid) for p in procs])
-        elif IS_LINUX:
+        if IS_LINUX:
             try_delete('core')
+        map(try_delete, [os.path.join(self.core_dir,
+                                      self.core_fmt.format(pid=proc.pid))
+                         for proc in procs])
 
 
 class LimitedForkServer(ForkingTCPServer):
@@ -272,7 +325,9 @@ def main():
     # Start the challenge server
     ForkingTCPServer.allow_reuse_address = True
     if args.max_connections > 0:
-        srv = LimitedForkServer(('localhost', args.port), ChallengeHandler, args.max_connections)
+        srv = LimitedForkServer(('localhost', args.port),
+                                ChallengeHandler,
+                                args.max_connections)
     else:
         srv = ForkingTCPServer(('localhost', args.port), ChallengeHandler)
 

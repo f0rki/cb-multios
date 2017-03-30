@@ -18,7 +18,7 @@ import subprocess32 as subprocess
 try:
     import cPickle as pickle
 except ImportError:
-    import pickle
+    import pickle  # noqa
 
 import xlsxwriter as xl  # pip install xlsxwriter
 import xlsxwriter.utility as xlutil
@@ -26,13 +26,27 @@ import xlsxwriter.utility as xlutil
 try:
     import colorlog
 except ImportError:
-    colorlog = None
+    colorlog = None  # noqa
 
 
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 CHAL_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'processed-challenges')
 TEST_DIR = os.path.join(TOOLS_DIR, 'cb-testing')
 BUILD_DIR = os.path.join(os.path.dirname(TOOLS_DIR), 'build')
+CONTINUOUS_SAVE_AFTER = 5
+log = None
+
+
+class MultilineFilter(logging.Filter):
+    """replace newlines so that it's clear when a log messages starts/stops"""
+
+    def sanitize(self, s):
+        return s.replace("\n", "\n | ")
+
+    def filter(self, record):
+        if isinstance(record.msg, str):
+            record.msg = self.sanitize(record.msg)
+        return super(MultilineFilter, self).filter(record)
 
 
 def setup_logging(console=True, logfile=None, loglevel=logging.INFO,
@@ -59,6 +73,8 @@ def setup_logging(console=True, logfile=None, loglevel=logging.INFO,
         fmt = '%(asctime)s ; %(levelname)s ; %(name)s ; %(message)s'
         handler.setFormatter(logging.Formatter(fmt, timefmt + ":%s"))
         log.addHandler(handler)
+
+    log.addFilter(MultilineFilter())
 
     return log
 
@@ -180,7 +196,7 @@ class Tester:
         """
         # If the test failed to run, consider it failed
         if 'TOTAL TESTS' not in output:
-            self.log.warning('there was an error running a test """{}"""'
+            self.log.warning('there was an error running a test\n"""\n{}\n"""'
                              .format(output))
             return 0, 0, 0
 
@@ -215,10 +231,13 @@ class Tester:
             cb_cmd += ['--should_core']
 
         for i in range(self.test_tries):
-            self.log.debug("running command '{}' in dir '{}' (try {} / {})"
-                           .format(" ".join(cb_cmd), TEST_DIR,
+            self.log.debug("running command '{}' (try {} / {})"
+                           .format(" ".join(cb_cmd),
                                    i + 1, self.test_tries))
+            self.log.debug("launching with LD_LIBRARY_PATH=" +
+                    os.environ["LD_LIBRARY_PATH"])
             with subprocess.Popen(cb_cmd,
+                                  env=os.environ,
                                   cwd=TEST_DIR,
                                   stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE,
@@ -340,15 +359,17 @@ class Tester:
         if Tester.polls_enabled:
             for subdir in listdir(self.poll_dir):
                 self.log.info('running POLL {}'.format(subdir))
-                self.run_against_dir(os.path.join(
-                    self.poll_dir, subdir), self.polls)
+                self.run_against_dir(os.path.join(self.poll_dir, subdir),
+                                     self.polls)
+
         self.log.info('Done testing {} => Passed {}/{} tests'
                       .format(self.name, self.passed, self.total))
         self.finished = True
 
 
 def test_challenges(chal_names, variants, previous_testers,
-                    test_tries, test_timeout, cb_timeout):
+                    test_tries, test_timeout, cb_timeout,
+                    state_save_file=None):
     # type: (list) -> list
     # Filter out any challenges that don't exist
     chals = []
@@ -380,7 +401,8 @@ def test_challenges(chal_names, variants, previous_testers,
     # this can be a pretty long running loop. So we make it interruptible,
     # without loosing data about done tests...
     try:
-        for i, test in enumerate(testers.values()):
+        testsiter = enumerate(sorted(testers.values(), key=lambda x: x.name))
+        for i, test in testsiter:
             if test.finished:
                 log.info("Skipping previously finished test {}/{} '{}'"
                          .format(i + 1, len(testers), test.name))
@@ -388,6 +410,11 @@ def test_challenges(chal_names, variants, previous_testers,
                 log.info("Running test {}/{} '{}'"
                          .format(i + 1, len(testers), test.name))
                 test.run()
+
+            if state_save_file and i % CONTINUOUS_SAVE_AFTER == 1:
+                log.info("saving state file after {}/{} tests"
+                         .format(i + 1, len(testers)))
+                save_tests_state(list(testers.values()), state_save_file)
     except KeyboardInterrupt:
         log.info("User abort during test {}/{} '{}'"
                  .format(i + 1, len(testers), test.name))
@@ -420,7 +447,7 @@ def get_testrun_info():
     """
     info = OrderedDict()
     now = datetime.datetime.now()
-    info['finish-time'] = now.strftime("%Y-%M-%D %H:%M (UTC %z)")
+    info['finish-time'] = now.strftime("%Y-%m-%d %H:%M (UTC %z)")
     info['git-commit'] = subprocess.check_output(["git", "log", "-1",
                                                   "--format=%H"]).strip()
     cmakecache = os.path.join(BUILD_DIR, "CMakeCache.txt")
@@ -434,22 +461,29 @@ def get_testrun_info():
     for k in ('c-compiler', 'cpp-compiler'):
         if k in info:
             try:
-                o = subprocess.check_output([info[k], '--version'])
+                p = os.path.realpath(os.path.expanduser(info[k]))
+                o = subprocess.check_output([p, '--version'])
                 o = o.split("\n")[0]
                 info[k + '-version'] = o.strip()
             except subprocess.CalledProcessError:
                 log.warning("compiler '{}' doesn't support '--version'"
                             .format(info[k]))
+            except:
+                log.warning("failed to version for " + k,
+                            exc_info=sys.exc_info())
     return info
 
 
-def save_tests(tests, state_file):
+def save_tests_state(tests, state_file):
     log.info("saving test state to {}".format(state_file))
     with open(state_file, "wb") as f:
         # do not pickle unpicklable LogAdapter wrapper
         for test in tests:
             test.log = None
         pickle.dump(tests, f)
+    # restore logadapter, in case they are used later on (e.g. continuous save)
+    for test in tests:
+        test._setup_log_adapter()
 
 
 def load_tests(state_file):
@@ -740,6 +774,19 @@ def listdir(path, hidden=False):
                   key=lambda s: s.lower())
 
 
+def setup_ld_library_path():
+    """
+    make sure that the cbs find libcgc and the tinyAES lib.
+    this is needed if the cbs were built on a different host.
+    """
+    dirs = [os.path.realpath(os.path.expandvars(os.path.join(BUILD_DIR, x)))
+            for x in ("include/", "include/tiny-AES128-C/")]
+    ldpath = ":".join(dirs)
+    os.environ["LD_LIBRARY_PATH"] = ldpath
+    os.putenv("LD_LIBRARY_PATH", ldpath)
+    log.debug("set LD_LIBRARY_PATH=" + ldpath)
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -797,6 +844,10 @@ def main():
                         help="store the state of unfinished/finished test"
                              "results")
 
+    parser.add_argument('--continuous-save',
+                        action='store_true',
+                        help="enable continuous saving of the state file")
+
     parser.add_argument('--load-state',
                         action='store_true',
                         help="load the state of cb test results and continue")
@@ -834,6 +885,8 @@ def main():
                                   if args.verbose
                                   else logging.INFO))
 
+    setup_ld_library_path()
+
     variants = None
     if args.variants:
         variants = OrderedDict()
@@ -858,12 +911,16 @@ def main():
                  .format(len(args.chals)))
         chals = args.chals
 
+    chals = sorted(chals)
+
     if args.load_state:
         previous_tests = load_tests(args.state_file)
+        previous_tests = sorted(previous_tests,
+                                key=lambda x: x.name)
         log.info("loaded {} tests from previous state"
                  .format(len(previous_tests)))
-        log.debug("previous tests: " +
-                  ", ".join("{}: {}".format(t.name,
+        log.debug("previous tests:\n" +
+                  "\n".join("{}: {}".format(t.name,
                                             "done" if t.finished
                                             else "pending")
                             for t in previous_tests))
@@ -876,13 +933,16 @@ def main():
 
     tests = test_challenges(chals, variants, previous_tests,
                             args.test_tries, args.test_timeout,
-                            args.cb_timeout)
+                            args.cb_timeout,
+                            args.state_file if args.continuous_save else None)
 
-    if args.save_state:
-        save_tests(tests, args.state_file)
+    if args.save_state or args.continuous_save:
+        save_tests_state(tests, args.state_file)
 
     # save only finished tests to results output
     tests = [test for test in tests if test.finished]
+    # sort tests according to cb name
+    tests = sorted(tests, key=lambda x: x.name)
 
     log.info("Finished {} tests".format(len(tests)))
 
