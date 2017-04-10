@@ -411,7 +411,7 @@ def test_challenges(chal_names, variants, previous_testers,
                          .format(i + 1, len(testers), test.name))
                 test.run()
 
-            if state_save_file and i % CONTINUOUS_SAVE_AFTER == 1:
+            if state_save_file and ((i + 1) % CONTINUOUS_SAVE_AFTER) == 0:
                 log.info("saving state file after {}/{} tests"
                          .format(i + 1, len(testers)))
                 save_tests_state(list(testers.values()), state_save_file)
@@ -848,6 +848,11 @@ def main():
                         action='store_true',
                         help="enable continuous saving of the state file")
 
+    parser.add_argument('--continuous-save-interval',
+                        type=int,
+                        default=CONTINUOUS_SAVE_AFTER,
+                        help="enable continuous saving of the state file")
+
     parser.add_argument('--load-state',
                         action='store_true',
                         help="load the state of cb test results and continue")
@@ -930,6 +935,10 @@ def main():
                  .format(len(previous_tests)))
     else:
         previous_tests = []
+
+    if args.continuous_save:
+        global CONTINUOUS_SAVE_AFTER
+        CONTINUOUS_SAVE_AFTER = args.continuous_save_interval
 
     tests = test_challenges(chals, variants, previous_tests,
                             args.test_tries, args.test_timeout,
