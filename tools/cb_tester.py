@@ -788,6 +788,7 @@ def setup_ld_library_path():
 
 
 def main():
+    global CONTINUOUS_SAVE_AFTER
     parser = argparse.ArgumentParser()
 
     g = parser.add_mutually_exclusive_group(required=True)
@@ -937,7 +938,6 @@ def main():
         previous_tests = []
 
     if args.continuous_save:
-        global CONTINUOUS_SAVE_AFTER
         CONTINUOUS_SAVE_AFTER = args.continuous_save_interval
 
     tests = test_challenges(chals, variants, previous_tests,
