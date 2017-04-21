@@ -166,13 +166,13 @@ class ChallengeHandler(StreamRequestHandler):
             if proc.returncode not in [None, 0, signal.SIGTERM, signal.SIGABRT]:
                 # Print the return code
                 pid, sig = proc.pid, abs(proc.returncode)
-                sig_name = "unknown signal"
-                for k, v in signal.__dict__.iteritems():
-                    if v == sig and k.startswith("SIG") and not k.startswith("SIG_"):
-                        sig_name = k
+                # sig_name = "unknown signal"
+                # for k, v in signal.__dict__.iteritems():
+                #     if v == sig and k.startswith("SIG") and not k.startswith("SIG_"):
+                #         sig_name = k
                 # warning: do not change this as it is parsed by cb-test. If
                 # you do adapt sig_re in Runner.check_result
-                stdout_flush('Process generated signal (pid: {}, signal: {} {}) - {}\n'.format(pid, sig, sig_name, testpath))
+                stdout_flush('Process generated signal (pid: {}, signal: {}) - {}\n'.format(pid, sig, testpath))
 
                 # Print register values
                 regs = self.get_core_dump_regs(proc)
@@ -198,6 +198,7 @@ class ChallengeHandler(StreamRequestHandler):
             (dict): Registers and their values
         """
         # Create a gdb/lldb command to get regs
+        coredotpid = self.core_fmt.format(pid=proc.pid)
         corefile = os.path.join(self.core_dir,
                                 self.core_fmt.format(pid=proc.pid))
         if IS_DARWIN:
@@ -207,12 +208,16 @@ class ChallengeHandler(StreamRequestHandler):
                 '--batch', '--one-line', 'register read'
             ]
         elif IS_LINUX:
+            # TODO: does this case really happen?
             if os.path.exists("./core"):
                 shutil.move("./core", corefile)
 
+            if os.path.exists(coredotpid):
+                shutil.move(coredotpid, corefile)
+
             if not os.path.exists(corefile):
-                stdout_flush("no core file found in current directory."
-                             " trying coredumpctl\n")
+                # stdout_flush("no core file found in current directory."
+                #              " trying coredumpctl\n")
                 cmd = ['coredumpctl', '--output=' + corefile, '-1',
                        'dump', str(proc.name), str(proc.pid)]
                 # wait a little until the coredump is processed

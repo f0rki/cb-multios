@@ -195,10 +195,19 @@ class Tester:
             (int, int): # of tests run, # of tests passed
         """
         # If the test failed to run, consider it failed
-        if 'TOTAL TESTS' not in output:
+        if 'TOTAL TESTS' not in output or 'TOTAL PASSED' not in output:
             self.log.warning('there was an error running a test\n"""\n{}\n"""'
                              .format(output))
             return 0, 0, 0
+
+        for line in output.split("\n"):
+            if line and line.strip():
+                if line[0] == "#":
+                    self.log.debug("cb-test: " + line.strip())
+                elif line.startswith("not ok"):
+                    self.log.warning("cb-test: " + line.strip())
+                else:
+                    self.log.debug("cb-test: " + line.strip())
 
         if 'timed out' in output:
             timedout = output.count("timed out")
